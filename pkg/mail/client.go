@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -17,26 +18,12 @@ func NewClient() *Client {
 	return &Client{}
 }
 
-// escapeJSString escapes a string for use in JavaScript single-quoted strings
-func escapeJSString(s string) string {
-	s = strings.ReplaceAll(s, "\\", "\\\\") // Escape backslashes first
-	s = strings.ReplaceAll(s, "'", "\\'")   // Escape single quotes
-	s = strings.ReplaceAll(s, "\n", "\\n")  // Escape newlines
-	s = strings.ReplaceAll(s, "\r", "\\r")  // Escape carriage returns
-	s = strings.ReplaceAll(s, "\t", "\\t")  // Escape tabs
-	return s
-}
+// runOSA executes an Open Scripting Architecture source string.
+func (c *Client) runOSA(language, errorLabel, script string, args ...string) (string, error) {
+	cmdArgs := []string{"-l", language, "-e", script}
+	cmdArgs = append(cmdArgs, args...)
 
-// escapeAppleScriptString escapes a string for use in AppleScript double-quoted strings
-func escapeAppleScriptString(s string) string {
-	s = strings.ReplaceAll(s, "\\", "\\\\") // Escape backslashes first
-	s = strings.ReplaceAll(s, "\"", "\\\"") // Escape double quotes
-	return s
-}
-
-// runAppleScript executes an AppleScript and returns the output
-func (c *Client) runAppleScript(script string) (string, error) {
-	cmd := exec.Command("osascript", "-e", script)
+	cmd := exec.Command("osascript", cmdArgs...)
 	var out bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &out
@@ -44,26 +31,21 @@ func (c *Client) runAppleScript(script string) (string, error) {
 
 	err := cmd.Run()
 	if err != nil {
-		return "", fmt.Errorf("applescript error: %v - %s", err, stderr.String())
+		return "", fmt.Errorf("%s error: %v - %s", errorLabel, err, stderr.String())
 	}
 
 	return strings.TrimSpace(out.String()), nil
 }
 
-// runJXA executes JavaScript for Automation (JXA) and returns the output
-func (c *Client) runJXA(script string) (string, error) {
-	cmd := exec.Command("osascript", "-l", "JavaScript", "-e", script)
-	var out bytes.Buffer
-	var stderr bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &stderr
+// runAppleScript executes AppleScript, optionally passing arguments to run argv.
+func (c *Client) runAppleScript(script string, args ...string) (string, error) {
+	return c.runOSA("AppleScript", "applescript", script, args...)
+}
 
-	err := cmd.Run()
-	if err != nil {
-		return "", fmt.Errorf("jxa error: %v - %s", err, stderr.String())
-	}
-
-	return strings.TrimSpace(out.String()), nil
+// runJXA executes JavaScript for Automation (JXA), optionally passing
+// arguments to its run(argv) function, and returns the output.
+func (c *Client) runJXA(script string, args ...string) (string, error) {
+	return c.runOSA("JavaScript", "jxa", script, args...)
 }
 
 // Account represents a Mail.app account
@@ -112,25 +94,7 @@ type Attachment struct {
 
 // GetAccounts retrieves all Mail.app accounts
 func (c *Client) GetAccounts() ([]Account, error) {
-	script := `
-	tell application "Mail"
-		set accountList to {}
-		repeat with acc in accounts
-			set accountInfo to {id:id of acc, name:name of acc, emailAddress:(try
-				(email addresses of acc)
-			on error
-				""
-			end try), accountType:(try
-				(delivery account of acc) as string
-			on error
-				"unknown"
-			end try), userName:user name of acc, enabled:enabled of acc}
-			set end of accountList to accountInfo
-		end repeat
-		return accountList
-	end tell
-`
-	output, err := c.runAppleScript(script)
+	output, err := c.runAppleScript(getAccountsAppleScript)
 	if err != nil {
 		return nil, err
 	}
@@ -142,21 +106,7 @@ func (c *Client) GetAccounts() ([]Account, error) {
 
 // GetMailboxes retrieves all mailboxes for a specific account
 func (c *Client) GetMailboxes(accountName string) ([]Mailbox, error) {
-	script := fmt.Sprintf(`
-	tell application "Mail"
-		set mailboxList to {}
-		try
-			set targetAccount to account "%s"
-			repeat with mbox in mailboxes of targetAccount
-				set mailboxInfo to {name:(name of mbox), unreadCount:(unread count of mbox), totalCount:(count of messages in mbox), account:(name of targetAccount)}
-				set end of mailboxList to mailboxInfo
-			end repeat
-		end try
-		return mailboxList
-	end tell
-`, escapeAppleScriptString(accountName))
-
-	output, err := c.runAppleScript(script)
+	output, err := c.runAppleScript(getMailboxesAppleScript, accountName)
 	if err != nil {
 		return nil, err
 	}
@@ -167,19 +117,7 @@ func (c *Client) GetMailboxes(accountName string) ([]Mailbox, error) {
 
 // GetAllMailboxes retrieves all mailboxes across all accounts
 func (c *Client) GetAllMailboxes() ([]Mailbox, error) {
-	script := `
-	tell application "Mail"
-		set mailboxList to {}
-		repeat with acc in accounts
-			repeat with mbox in mailboxes of acc
-				set mailboxInfo to {name:(name of mbox), unreadCount:(unread count of mbox), totalCount:(count of messages in mbox), account:(name of acc)}
-				set end of mailboxList to mailboxInfo
-			end repeat
-		end repeat
-		return mailboxList
-	end tell
-`
-	output, err := c.runAppleScript(script)
+	output, err := c.runAppleScript(getAllMailboxesAppleScript)
 	if err != nil {
 		return nil, err
 	}
@@ -190,31 +128,12 @@ func (c *Client) GetAllMailboxes() ([]Mailbox, error) {
 
 // GetMessages retrieves messages from a mailbox
 func (c *Client) GetMessages(accountName, mailboxName string, limit int) ([]Message, error) {
-	limitClause := ""
-	if limit > 0 {
-		limitClause = fmt.Sprintf("if msgCount > %d then set msgCount to %d", limit, limit)
-	}
-
-	script := fmt.Sprintf(`
-	tell application "Mail"
-		set messageList to {}
-		try
-			set targetAccount to account "%s"
-			set targetMailbox to mailbox "%s" of targetAccount
-			set msgCount to count of messages in targetMailbox
-			%s
-
-			repeat with i from 1 to msgCount
-				set msg to message i of targetMailbox
-				set msgInfo to {subject:(subject of msg), sender:(sender of msg), dateSent:(date sent of msg as string), dateReceived:(date received of msg as string), isRead:(read status of msg), isFlagged:(flagged status of msg), messageSize:(message size of msg)}
-				set end of messageList to msgInfo
-			end repeat
-		end try
-		return messageList
-	end tell
-`, escapeAppleScriptString(accountName), escapeAppleScriptString(mailboxName), limitClause)
-
-	output, err := c.runAppleScript(script)
+	output, err := c.runAppleScript(
+		getMessagesAppleScript,
+		accountName,
+		mailboxName,
+		strconv.Itoa(limit),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -225,31 +144,11 @@ func (c *Client) GetMessages(accountName, mailboxName string, limit int) ([]Mess
 
 // SearchMessages searches for messages matching a query
 func (c *Client) SearchMessages(query string, limit int) ([]Message, error) {
-	limitClause := ""
-	if limit > 0 {
-		limitClause = fmt.Sprintf("if msgCount > %d then set msgCount to %d", limit, limit)
-	}
-
-	// query is injected into AppleScript double quotes, needs escaping
-	script := fmt.Sprintf(`
-	tell application "Mail"
-		set messageList to {}
-		set foundMessages to (every message whose subject contains "%s" or sender contains "%s" or content contains "%s")
-		set msgCount to count of foundMessages
-		%s
-
-		repeat with i from 1 to msgCount
-			set msg to item i of foundMessages
-			try
-				set msgInfo to {subject:(subject of msg), sender:(sender of msg), dateSent:(date sent of msg as string), dateReceived:(date received of msg as string), isRead:(read status of msg), isFlagged:(flagged status of msg), messageSize:(message size of msg)}
-				set end of messageList to msgInfo
-			end try
-		end repeat
-		return messageList
-	end tell
-`, escapeAppleScriptString(query), escapeAppleScriptString(query), escapeAppleScriptString(query), limitClause)
-
-	output, err := c.runAppleScript(script)
+	output, err := c.runAppleScript(
+		searchMessagesAppleScript,
+		query,
+		strconv.Itoa(limit),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -260,179 +159,69 @@ func (c *Client) SearchMessages(query string, limit int) ([]Message, error) {
 
 // MarkMessageAsRead marks a message as read
 func (c *Client) MarkMessageAsRead(accountName, mailboxName, messageID string, read bool) error {
-	readStatus := "true"
-	if !read {
-		readStatus = "false"
-	}
-
-	script := fmt.Sprintf(`
-const mail = Application('Mail');
-try {
-	const acc = mail.accounts.byName('%s');
-	const mbox = acc.mailboxes.byName('%s');
-	const allIds = mbox.messages.id();
-	const targetIdx = allIds.findIndex(id => String(id) === '%s');
-	if (targetIdx < 0) {
-		'Error: Message not found';
-	} else {
-		mbox.messages.at(targetIdx).readStatus = %s;
-		'Success';
-	}
-} catch (e) {
-	'Error: ' + e;
-}
-`, escapeJSString(accountName), escapeJSString(mailboxName), escapeJSString(messageID), readStatus)
-
-	output, err := c.runJXA(script)
+	output, err := c.runJXA(
+		markMessageReadJXAScript,
+		accountName,
+		mailboxName,
+		messageID,
+		strconv.FormatBool(read),
+	)
 	if err != nil {
 		return err
 	}
 	if strings.Contains(output, "Error") {
-		return fmt.Errorf(output)
+		return fmt.Errorf("%s", output)
 	}
 	return nil
 }
 
 // FlagMessage sets or unsets the flagged status of a message
 func (c *Client) FlagMessage(accountName, mailboxName, messageID string, flagged bool) error {
-	flagStatus := "true"
-	if !flagged {
-		flagStatus = "false"
-	}
-
-	script := fmt.Sprintf(`
-const mail = Application('Mail');
-try {
-	const acc = mail.accounts.byName('%s');
-	const mbox = acc.mailboxes.byName('%s');
-	const allIds = mbox.messages.id();
-	const targetIdx = allIds.findIndex(id => String(id) === '%s');
-	if (targetIdx < 0) {
-		'Error: Message not found';
-	} else {
-		mbox.messages.at(targetIdx).flaggedStatus = %s;
-		'Success';
-	}
-} catch (e) {
-	'Error: ' + e;
-}
-`, escapeJSString(accountName), escapeJSString(mailboxName), escapeJSString(messageID), flagStatus)
-
-	output, err := c.runJXA(script)
+	output, err := c.runJXA(
+		flagMessageJXAScript,
+		accountName,
+		mailboxName,
+		messageID,
+		strconv.FormatBool(flagged),
+	)
 	if err != nil {
 		return err
 	}
 	if strings.Contains(output, "Error") {
-		return fmt.Errorf(output)
+		return fmt.Errorf("%s", output)
 	}
 	return nil
 }
 
 // DeleteMessage moves a message to trash
 func (c *Client) DeleteMessage(accountName, mailboxName, messageID string) error {
-	script := fmt.Sprintf(`
-const mail = Application('Mail');
-try {
-	const acc = mail.accounts.byName('%s');
-	const mbox = acc.mailboxes.byName('%s');
-	const allIds = mbox.messages.id();
-	const targetIdx = allIds.findIndex(id => String(id) === '%s');
-	if (targetIdx < 0) {
-		'Error: Message not found';
-	} else {
-		mbox.messages.at(targetIdx).delete();
-		'Success';
-	}
-} catch (e) {
-	'Error: ' + e;
-}
-`, escapeJSString(accountName), escapeJSString(mailboxName), escapeJSString(messageID))
-
-	output, err := c.runJXA(script)
+	output, err := c.runJXA(
+		deleteMessageJXAScript,
+		accountName,
+		mailboxName,
+		messageID,
+	)
 	if err != nil {
 		return err
 	}
 	if strings.Contains(output, "Error") {
-		return fmt.Errorf(output)
+		return fmt.Errorf("%s", output)
 	}
 	return nil
 }
 
 // SendMessage sends a new email message
 func (c *Client) SendMessage(accountName, subject, body string, to, cc, bcc, attachments []string) error {
-	// Escape all recipients
-	var toList, ccList, bccList string
-	var escapedTo, escapedCc, escapedBcc []string
+	args := []string{accountName, subject, body, strconv.Itoa(len(to))}
+	args = append(args, to...)
+	args = append(args, strconv.Itoa(len(cc)))
+	args = append(args, cc...)
+	args = append(args, strconv.Itoa(len(bcc)))
+	args = append(args, bcc...)
+	args = append(args, strconv.Itoa(len(attachments)))
+	args = append(args, attachments...)
 
-	for _, addr := range to {
-		escapedTo = append(escapedTo, escapeAppleScriptString(addr))
-	}
-	toList = strings.Join(escapedTo, `", "`)
-
-	for _, addr := range cc {
-		escapedCc = append(escapedCc, escapeAppleScriptString(addr))
-	}
-	ccList = strings.Join(escapedCc, `", "`)
-
-	for _, addr := range bcc {
-		escapedBcc = append(escapedBcc, escapeAppleScriptString(addr))
-	}
-	bccList = strings.Join(escapedBcc, `", "`)
-
-	// Build attachment code
-	var attachCodeBuilder strings.Builder
-	for _, attPath := range attachments {
-		escapedPath := escapeAppleScriptString(attPath)
-		fmt.Fprintf(&attachCodeBuilder, `
-			try
-				make new attachment with properties {file name:"%s"} at after the last paragraph
-			on error
-				-- Skip files that can't be attached
-			end try
-`, escapedPath)
-	}
-	attachCode := attachCodeBuilder.String()
-
-	// AppleScript block
-	script := fmt.Sprintf(`
-	tell application "Mail"
-		try
-			set targetAccount to account "%s"
-			set newMessage to make new outgoing message with properties {subject:"%s", content:"%s", visible:false}
-
-			tell newMessage
-				set sender to (item 1 of (email addresses of targetAccount as list))
-
-				repeat with addr in {"%s"}
-					make new to recipient at end of to recipients with properties {address:addr}
-				end repeat
-
-				if "%s" is not "" then
-					repeat with addr in {"%s"}
-						make new cc recipient at end of cc recipients with properties {address:addr}
-					end repeat
-				end if
-
-				if "%s" is not "" then
-					repeat with addr in {"%s"}
-						make new bcc recipient at end of bcc recipients with properties {address:addr}
-					end repeat
-				end if
-%s
-			send
-			end tell
-			return "Success"
-		on error errMsg
-			return "Error: " & errMsg
-		end try
-	end tell
-`, escapeAppleScriptString(accountName), escapeAppleScriptString(subject), escapeAppleScriptString(body),
-		toList,
-		ccList, ccList,
-		bccList, bccList,
-		attachCode)
-
-	_, err := c.runAppleScript(script)
+	_, err := c.runAppleScript(sendMessageAppleScript, args...)
 	return err
 }
 
@@ -456,18 +245,7 @@ func (c *Client) parseMessages(_ string) ([]Message, error) {
 
 // GetUnreadCount gets the total unread message count
 func (c *Client) GetUnreadCount() (int, error) {
-	script := `
-	tell application "Mail"
-		set totalUnread to 0
-		repeat with acc in accounts
-			repeat with mbox in mailboxes of acc
-				set totalUnread to totalUnread + (unread count of mbox)
-			end repeat
-		end repeat
-		return totalUnread
-	end tell
-`
-	output, err := c.runAppleScript(script)
+	output, err := c.runAppleScript(getUnreadCountAppleScript)
 	if err != nil {
 		return 0, err
 	}
@@ -479,25 +257,7 @@ func (c *Client) GetUnreadCount() (int, error) {
 
 // GetAccountsJSON retrieves accounts as JSON using JXA
 func (c *Client) GetAccountsJSON() ([]Account, error) {
-	script := `
-const mail = Application('Mail');
-const accounts = mail.accounts();
-const result = [];
-
-for (let i = 0; i < accounts.length; i++) {
-	const acc = accounts[i];
-	result.push({
-		id: acc.id(),
-		name: acc.name(),
-		emailAddress: acc.emailAddresses().length > 0 ? acc.emailAddresses()[0] : '',
-		userName: acc.userName(),
-		enabled: acc.enabled()
-	});
-}
-
-JSON.stringify(result);
-`
-	output, err := c.runJXA(script)
+	output, err := c.runJXA(getAccountsJXAScript)
 	if err != nil {
 		return nil, err
 	}
@@ -514,22 +274,7 @@ JSON.stringify(result);
 // Note: Mail.app's AppleScript doesn't support per-account sync, so this syncs all accounts
 func (c *Client) SyncAccount(accountName string) error {
 	// Verify account exists
-	script := fmt.Sprintf(`
-	tell application "Mail"
-		set accountFound to false
-		repeat with acc in accounts
-			if name of acc is "%s" then
-				set accountFound to true
-				exit repeat
-			end if
-		end repeat
-		if not accountFound then
-			error "Account not found: %s"
-		end if
-	end tell
-`, escapeAppleScriptString(accountName), escapeAppleScriptString(accountName))
-
-	_, err := c.runAppleScript(script)
+	_, err := c.runAppleScript(syncAccountAppleScript, accountName)
 	if err != nil {
 		return err
 	}
@@ -540,8 +285,7 @@ func (c *Client) SyncAccount(accountName string) error {
 
 // SyncAllAccounts forces Mail.app to check for new mail across all accounts
 func (c *Client) SyncAllAccounts() error {
-	script := `tell application "Mail" to check for new mail`
-	_, err := c.runAppleScript(script)
+	_, err := c.runAppleScript(syncAllAccountsAppleScript)
 	return err
 }
 
@@ -604,37 +348,7 @@ func (c *Client) GetMailboxesJSON(accountName string) ([]Mailbox, error) {
 
 // getMailboxesForSingleAccount retrieves mailboxes for a specific account
 func (c *Client) getMailboxesForSingleAccount(accountName string) ([]Mailbox, error) {
-	script := fmt.Sprintf(`
-const mail = Application('Mail');
-const result = [];
-
-try {
-	const acc = mail.accounts.byName('%s');
-	const accName = acc.name();
-	const mailboxes = acc.mailboxes();
-	for (let j = 0; j < mailboxes.length; j++) {
-		const mbox = mailboxes[j];
-		try {
-			let totalCount = 0;
-			try { totalCount = mbox.messages.count(); } catch (e) {}
-			result.push({
-				name: mbox.name(),
-				unreadCount: mbox.unreadCount(),
-				totalCount: totalCount,
-				account: accName
-			});
-		} catch (e) {
-			// Skip mailboxes that can't be queried at all
-		}
-	}
-} catch (e) {
-	// Handle errors gracefully
-}
-
-JSON.stringify(result);
-`, escapeJSString(accountName))
-
-	output, err := c.runJXA(script)
+	output, err := c.runJXA(getMailboxesJXAScript, accountName)
 	if err != nil {
 		return nil, err
 	}
@@ -649,91 +363,17 @@ JSON.stringify(result);
 
 // GetMessagesJSON retrieves messages from a mailbox using JXA
 func (c *Client) GetMessagesJSON(accountName, mailboxName string, limit, offset int, unreadOnly, flaggedOnly, withContent bool, since string) ([]Message, error) {
-	// Build filter/offset/limit clauses using index-based approach.
-	// Bulk property accessors (mbox.messages.readStatus()) fetch all values in a
-	// single IPC call rather than one round-trip per message.
-	unreadFilter := ""
-	if unreadOnly {
-		unreadFilter = "{ const rs = mbox.messages.readStatus(); indices = indices.filter(i => !rs[i]); }"
-	}
-
-	flaggedFilter := ""
-	if flaggedOnly {
-		flaggedFilter = "{ const fs = mbox.messages.flaggedStatus(); indices = indices.filter(i => fs[i]); }"
-	}
-
-	sinceFilter := ""
-	if since != "" {
-		// Bulk-fetch all received dates in one IPC call, then filter by index
-		sinceFilter = fmt.Sprintf("{ const sd = new Date('%s'); const allDates = mbox.messages.dateReceived(); indices = indices.filter(i => { const d = allDates[i]; return d && d >= sd; }); }", escapeJSString(since))
-	}
-
-	offsetClause := ""
-	if offset > 0 {
-		offsetClause = fmt.Sprintf("if (indices.length > %d) indices = indices.slice(%d);", offset, offset)
-	}
-
-	limitClause := ""
-	if limit > 0 {
-		limitClause = fmt.Sprintf("if (indices.length > %d) indices = indices.slice(0, %d);", limit, limit)
-	}
-
-	contentField := "content: '',"
-	if withContent {
-		contentField = "content: msg.content() || '',"
-	}
-
-	script := fmt.Sprintf(`
-const mail = Application('Mail');
-const result = [];
-
-try {
-	const acc = mail.accounts.byName('%s');
-	const mbox = acc.mailboxes.byName('%s');
-	const accName = acc.name();
-	const mboxName = mbox.name();
-	const messages = mbox.messages();
-
-	// Index array; all filtering operates on indices so property access is bulk/deferred
-	let indices = Array.from({length: messages.length}, (_, i) => i);
-
-	// Bulk property filters (1 IPC call each instead of N)
-	%s
-	%s
-	%s
-	%s
-	%s
-
-	for (let k = 0; k < indices.length; k++) {
-		const i = indices[k];
-		const msg = messages[i];
-		try { if (msg.deletedStatus()) continue; } catch(e) {}
-		try {
-			result.push({
-				id: String(msg.id()),
-				subject: msg.subject() || '',
-				sender: msg.sender() || '',
-				dateReceived: (msg.dateReceived() || new Date()).toISOString(),
-				dateSent: (msg.dateSent() || new Date()).toISOString(),
-				read: msg.readStatus(),
-				flagged: msg.flaggedStatus(),
-				messageSize: 0,
-				%s
-				mailbox: mboxName,
-				account: accName
-			});
-		} catch (e) {
-			// Skip messages that cause errors
-		}
-	}
-} catch (e) {
-	// Handle errors gracefully
-}
-
-JSON.stringify(result);
-`, escapeJSString(accountName), escapeJSString(mailboxName), unreadFilter, flaggedFilter, sinceFilter, offsetClause, limitClause, contentField)
-
-	output, err := c.runJXA(script)
+	output, err := c.runJXA(
+		getMessagesJXAScript,
+		accountName,
+		mailboxName,
+		strconv.Itoa(limit),
+		strconv.Itoa(offset),
+		strconv.FormatBool(unreadOnly),
+		strconv.FormatBool(flaggedOnly),
+		strconv.FormatBool(withContent),
+		since,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -748,60 +388,12 @@ JSON.stringify(result);
 
 // GetMessageDetailsJSON retrieves full details of a specific message
 func (c *Client) GetMessageDetailsJSON(accountName, mailboxName, messageID string) (*Message, error) {
-	script := fmt.Sprintf(`
-const mail = Application('Mail');
-let result = null;
-
-try {
-	const acc = mail.accounts.byName('%s');
-	const mbox = acc.mailboxes.byName('%s');
-	const allIds = mbox.messages.id();
-	const targetIdx = allIds.findIndex(id => String(id) === '%s');
-	if (targetIdx >= 0) {
-		const msg = mbox.messages.at(targetIdx);
-		const toRecipients = [];
-		const toRecs = msg.toRecipients();
-		for (let t = 0; t < toRecs.length; t++) {
-			toRecipients.push(toRecs[t].address());
-		}
-
-		const ccRecipients = [];
-		const ccRecs = msg.ccRecipients();
-		for (let c = 0; c < ccRecs.length; c++) {
-			ccRecipients.push(ccRecs[c].address());
-		}
-
-		const bccRecipients = [];
-		const bccRecs = msg.bccRecipients();
-		for (let b = 0; b < bccRecs.length; b++) {
-			bccRecipients.push(bccRecs[b].address());
-		}
-
-		result = {
-			id: String(msg.id()),
-			subject: msg.subject() || '',
-			sender: msg.sender() || '',
-			dateReceived: (msg.dateReceived() || new Date()).toISOString(),
-			dateSent: (msg.dateSent() || new Date()).toISOString(),
-			read: msg.readStatus(),
-			flagged: msg.flaggedStatus(),
-			messageSize: msg.messageSize(),
-			content: msg.content() || '',
-			mailbox: mbox.name(),
-			account: acc.name(),
-			toRecipients: toRecipients,
-			ccRecipients: ccRecipients,
-			bccRecipients: bccRecipients
-		};
-	}
-} catch (e) {
-	// Handle errors gracefully
-}
-
-JSON.stringify(result);
-`, escapeJSString(accountName), escapeJSString(mailboxName), escapeJSString(messageID))
-
-	output, err := c.runJXA(script)
+	output, err := c.runJXA(
+		getMessageDetailsJXAScript,
+		accountName,
+		mailboxName,
+		messageID,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -814,143 +406,54 @@ JSON.stringify(result);
 	return &message, nil
 }
 
-// ArchiveMessage moves a message to the provider's archive mailbox.
-// Gmail exposes archived mail as "All Mail", and some Gmail accounts can also
-// have a user-created "Archive" label. Prefer "All Mail" when present, then
-// fall back to "Archive" for providers that expose a conventional archive
-// mailbox. Search recursively because some providers nest special mailboxes.
+// ArchiveMessage archives a message using Mail.app's provider-aware Archive
+// action. The script accepts either Mail's local numeric ID or the stable
+// Message-ID header, then uses the stable Message-ID to verify source removal.
 func (c *Client) ArchiveMessage(accountName, mailboxName, messageID string) error {
-	script := fmt.Sprintf(`
-const mail = Application('Mail');
-try {
-	const acc = mail.accounts.byName('%s');
-	const mbox = acc.mailboxes.byName('%s');
-	const allIds = mbox.messages.id();
-	const targetIdx = allIds.findIndex(id => String(id) === '%s');
-	if (targetIdx < 0) {
-		'Error: Message not found';
-	} else {
-		function findArchiveCandidates(mailboxes, candidates) {
-			for (let j = 0; j < mailboxes.length; j++) {
-				const name = mailboxes[j].name();
-				if (name === 'All Mail' || name === 'Archive') {
-					candidates.push({ name: name, mailbox: mailboxes[j] });
-				}
-				try {
-					const sub = mailboxes[j].mailboxes();
-					if (sub.length > 0) {
-						findArchiveCandidates(sub, candidates);
-					}
-				} catch(e) {}
-			}
-		}
-
-		const archiveCandidates = [];
-		findArchiveCandidates(acc.mailboxes(), archiveCandidates);
-		let archiveBox = null;
-		for (let i = 0; i < archiveCandidates.length; i++) {
-			if (archiveCandidates[i].name === 'All Mail') {
-				archiveBox = archiveCandidates[i].mailbox;
-				break;
-			}
-		}
-		if (!archiveBox) {
-			for (let i = 0; i < archiveCandidates.length; i++) {
-				if (archiveCandidates[i].name === 'Archive') {
-					archiveBox = archiveCandidates[i].mailbox;
-					break;
-				}
-			}
-		}
-		if (archiveBox) {
-			mbox.messages.at(targetIdx).mailbox = archiveBox;
-			'Success';
-		} else {
-			'Error: Archive mailbox not found';
-		}
-	}
-} catch (e) {
-	'Error: ' + e;
-}
-`, escapeJSString(accountName), escapeJSString(mailboxName), escapeJSString(messageID))
-
-	output, err := c.runJXA(script)
+	output, err := c.runJXA(
+		archiveJXAScript,
+		accountName,
+		mailboxName,
+		messageID,
+	)
 	if err != nil {
 		return err
 	}
-	if strings.Contains(output, "Error") {
-		return fmt.Errorf(output)
+	if strings.HasPrefix(output, "Error:") {
+		return fmt.Errorf("%s", output)
+	}
+	if output != "Success" {
+		return fmt.Errorf("unexpected archive script output: %q", output)
 	}
 	return nil
 }
 
 // MoveMessage moves a message to a different mailbox
 func (c *Client) MoveMessage(accountName, sourceMailbox, messageID, targetMailbox string) error {
-	script := fmt.Sprintf(`
-const mail = Application('Mail');
-try {
-	const acc = mail.accounts.byName('%s');
-	const sourceMbox = acc.mailboxes.byName('%s');
-	const allIds = sourceMbox.messages.id();
-	const targetIdx = allIds.findIndex(id => String(id) === '%s');
-	if (targetIdx < 0) {
-		'Error: Message not found';
-	} else {
-		const destMbox = acc.mailboxes.byName('%s');
-		sourceMbox.messages.at(targetIdx).mailbox = destMbox;
-		'Success';
-	}
-} catch (e) {
-	'Error: ' + e;
-}
-`, escapeJSString(accountName), escapeJSString(sourceMailbox), escapeJSString(messageID), escapeJSString(targetMailbox))
-
-	output, err := c.runJXA(script)
+	output, err := c.runJXA(
+		moveMessageJXAScript,
+		accountName,
+		sourceMailbox,
+		messageID,
+		targetMailbox,
+	)
 	if err != nil {
 		return err
 	}
 	if strings.Contains(output, "Error") {
-		return fmt.Errorf(output)
+		return fmt.Errorf("%s", output)
 	}
 	return nil
 }
 
 // GetAttachmentsJSON retrieves attachments from a message
 func (c *Client) GetAttachmentsJSON(accountName, mailboxName, messageID string) ([]Attachment, error) {
-	script := fmt.Sprintf(`
-const mail = Application('Mail');
-const result = [];
-
-try {
-	const acc = mail.accounts.byName('%s');
-	const mbox = acc.mailboxes.byName('%s');
-	const allIds = mbox.messages.id();
-	const targetIdx = allIds.findIndex(id => String(id) === '%s');
-	if (targetIdx >= 0) {
-		const attachments = mbox.messages.at(targetIdx).mailAttachments();
-		for (let a = 0; a < attachments.length; a++) {
-			const att = attachments[a];
-			let mimeType = 'unknown';
-			try {
-				mimeType = att.mimeType() || 'unknown';
-			} catch (e) {
-				// mimeType() sometimes fails in Mail.app
-			}
-			result.push({
-				name: att.name(),
-				fileSize: att.fileSize(),
-				mimeType: mimeType
-			});
-		}
-	}
-} catch (e) {
-	// Handle errors gracefully
-}
-
-JSON.stringify(result);
-`, escapeJSString(accountName), escapeJSString(mailboxName), escapeJSString(messageID))
-
-	output, err := c.runJXA(script)
+	output, err := c.runJXA(
+		getAttachmentsJXAScript,
+		accountName,
+		mailboxName,
+		messageID,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -965,46 +468,19 @@ JSON.stringify(result);
 
 // SaveAttachment saves an attachment to disk
 func (c *Client) SaveAttachment(accountName, mailboxName, messageID, attachmentName, savePath string) error {
-	script := fmt.Sprintf(`
-const mail = Application('Mail');
-const app = Application.currentApplication();
-app.includeStandardAdditions = true;
-
-try {
-	const acc = mail.accounts.byName('%s');
-	const mbox = acc.mailboxes.byName('%s');
-	const allIds = mbox.messages.id();
-	const targetIdx = allIds.findIndex(id => String(id) === '%s');
-	if (targetIdx < 0) {
-		'Error: Message not found';
-	} else {
-		const attachments = mbox.messages.at(targetIdx).mailAttachments();
-		let found = false;
-		for (let a = 0; a < attachments.length; a++) {
-			if (attachments[a].name() === '%s') {
-				const pathObj = Path('%s');
-				attachments[a].save({ in: pathObj });
-				found = true;
-				break;
-			}
-		}
-		if (found) {
-			'Success';
-		} else {
-			'Error: Attachment not found';
-		}
-	}
-} catch (e) {
-	'Error: ' + e;
-}
-`, escapeJSString(accountName), escapeJSString(mailboxName), escapeJSString(messageID), escapeJSString(attachmentName), escapeJSString(savePath))
-
-	output, err := c.runJXA(script)
+	output, err := c.runJXA(
+		saveAttachmentJXAScript,
+		accountName,
+		mailboxName,
+		messageID,
+		attachmentName,
+		savePath,
+	)
 	if err != nil {
 		return err
 	}
 	if strings.Contains(output, "Error") {
-		return fmt.Errorf(output)
+		return fmt.Errorf("%s", output)
 	}
 	return nil
 }
@@ -1091,60 +567,13 @@ func (c *Client) SearchMessagesJSON(query string, accountName string, mailboxNam
 
 // searchMessagesInSingleMailbox searches for messages in a specific mailbox
 func (c *Client) searchMessagesInSingleMailbox(query, accountName, mailboxName string, limit int) ([]Message, error) {
-	// Use helper for escaping
-	escapedQuery := escapeJSString(query)
-	escapedAccount := escapeJSString(accountName)
-	escapedMailbox := escapeJSString(mailboxName)
-
-	script := fmt.Sprintf(`
-const mail = Application('Mail');
-const result = [];
-const searchTerm = '%s'.toLowerCase();
-const maxResults = %d;
-
-try {
-	const acc = mail.accounts.byName('%s');
-	const mbox = acc.mailboxes.byName('%s');
-	const accName = acc.name();
-	const mboxName = mbox.name();
-	const messages = mbox.messages();
-	// Limit how many messages to check per mailbox for performance
-	// Messages are typically sorted newest first, so this checks recent messages
-	const maxToCheck = Math.min(messages.length, 500);
-
-	for (let k = 0; k < maxToCheck && result.length < maxResults; k++) {
-		const msg = messages[k];
-		try {
-			const subject = (msg.subject() || '').toLowerCase();
-			const sender = (msg.sender() || '').toLowerCase();
-
-			// Only search subject and sender
-			if (subject.includes(searchTerm) || sender.includes(searchTerm)) {
-				result.push({
-					id: String(msg.id()),
-					subject: msg.subject() || '',
-					sender: msg.sender() || '',
-					dateReceived: (msg.dateReceived() || new Date()).toISOString(),
-					dateSent: (msg.dateSent() || new Date()).toISOString(),
-					read: msg.readStatus(),
-					flagged: msg.flaggedStatus(),
-					messageSize: msg.messageSize(),
-					mailbox: mboxName,
-					account: accName
-				});
-			}
-		} catch (e) {
-			// Skip messages that cause errors
-		}
-	}
-} catch (e) {
-	// Handle errors gracefully
-}
-
-JSON.stringify(result);
-`, escapedQuery, limit, escapedAccount, escapedMailbox)
-
-	output, err := c.runJXA(script)
+	output, err := c.runJXA(
+		searchMessagesJXAScript,
+		query,
+		accountName,
+		mailboxName,
+		strconv.Itoa(limit),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -1159,14 +588,14 @@ JSON.stringify(result);
 
 // GetMessagesFromMultipleMailboxes loads messages from multiple mailboxes concurrently
 func (c *Client) GetMessagesFromMultipleMailboxes(requests []struct {
-	AccountName  string
-	MailboxName  string
-	Limit        int
-	Offset       int
-	UnreadOnly   bool
-	FlaggedOnly  bool
-	WithContent  bool
-	Since        string
+	AccountName string
+	MailboxName string
+	Limit       int
+	Offset      int
+	UnreadOnly  bool
+	FlaggedOnly bool
+	WithContent bool
+	Since       string
 }) ([]Message, error) {
 	if len(requests) == 0 {
 		return []Message{}, nil
@@ -1188,14 +617,14 @@ func (c *Client) GetMessagesFromMultipleMailboxes(requests []struct {
 	// Launch goroutine for each mailbox
 	for _, req := range requests {
 		go func(r struct {
-			AccountName  string
-			MailboxName  string
-			Limit        int
-			Offset       int
-			UnreadOnly   bool
-			FlaggedOnly  bool
-			WithContent  bool
-			Since        string
+			AccountName string
+			MailboxName string
+			Limit       int
+			Offset      int
+			UnreadOnly  bool
+			FlaggedOnly bool
+			WithContent bool
+			Since       string
 		}) {
 			messages, err := c.GetMessagesJSON(r.AccountName, r.MailboxName, r.Limit, r.Offset, r.UnreadOnly, r.FlaggedOnly, r.WithContent, r.Since)
 			results <- result{messages: messages, err: err}
@@ -1224,9 +653,9 @@ func (c *Client) GetMessagesFromMultipleMailboxes(requests []struct {
 
 // GetMultipleMessageDetails loads full details for multiple messages concurrently
 func (c *Client) GetMultipleMessageDetails(requests []struct {
-	AccountName  string
-	MailboxName  string
-	MessageID    string
+	AccountName string
+	MailboxName string
+	MessageID   string
 }) ([]*Message, error) {
 	if len(requests) == 0 {
 		return []*Message{}, nil
@@ -1253,9 +682,9 @@ func (c *Client) GetMultipleMessageDetails(requests []struct {
 	// Launch goroutine for each message
 	for i, req := range requests {
 		go func(idx int, r struct {
-			AccountName  string
-			MailboxName  string
-			MessageID    string
+			AccountName string
+			MailboxName string
+			MessageID   string
 		}) {
 			message, err := c.GetMessageDetailsJSON(r.AccountName, r.MailboxName, r.MessageID)
 			results <- result{message: message, err: err, index: idx}
@@ -1561,68 +990,17 @@ func (c *Client) getInboxBasedUnified(mailboxType string, limit, offset int, wit
 // junkMailboxes) via a single JXA call.  No per-message filtering is applied
 // since these views don't need unread/flagged filtering.
 func (c *Client) getSpecialMailboxUnified(mailboxType string, limit, offset int, withContent bool) ([]Message, error) {
-	accessor := map[string]string{
-		"sent":   "sentMailboxes",
-		"drafts": "draftMailboxes",
-		"trash":  "trashMailboxes",
-		"junk":   "junkMailboxes",
-	}[mailboxType]
-
 	perLimit := limit + offset
 	if perLimit < 50 {
 		perLimit = 50
 	}
 
-	contentField := "content: '',"
-	if withContent {
-		contentField = "content: msg.content() || '',"
-	}
-
-	script := fmt.Sprintf(`
-const mail = Application('Mail');
-const result = [];
-const mailboxes = mail.%s();
-
-for (let m = 0; m < mailboxes.length; m++) {
-	const mbox = mailboxes[m];
-	let accName = '';
-	let mboxName = '';
-	try { accName = mbox.account().name(); } catch(e) {
-		try { accName = mbox.account.name(); } catch(e2) { accName = ''; }
-	}
-	try { mboxName = mbox.name(); } catch(e) { mboxName = '%s'; }
-
-	let messages;
-	try { messages = mbox.messages(); } catch(e) { continue; }
-
-	// Cap per-mailbox before iterating
-	const cap = Math.min(messages.length, %d);
-
-	for (let k = 0; k < cap; k++) {
-		const msg = messages[k];
-		try { if (msg.deletedStatus()) continue; } catch(e) {}
-		try {
-			result.push({
-				id: String(msg.id()),
-				subject: msg.subject() || '',
-				sender: msg.sender() || '',
-				dateReceived: (msg.dateReceived() || new Date()).toISOString(),
-				dateSent: (msg.dateSent() || new Date()).toISOString(),
-				read: msg.readStatus(),
-				flagged: msg.flaggedStatus(),
-				messageSize: 0,
-				%s
-				mailbox: mboxName,
-				account: accName
-			});
-		} catch(e) {}
-	}
-}
-
-JSON.stringify(result);
-`, accessor, mailboxType, perLimit, contentField)
-
-	output, err := c.runJXA(script)
+	output, err := c.runJXA(
+		getSpecialMailboxJXAScript,
+		mailboxType,
+		strconv.Itoa(perLimit),
+		strconv.FormatBool(withContent),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -1653,10 +1031,10 @@ func sortAndSlice(messages []Message, offset, limit int) []Message {
 }
 
 func (c *Client) BulkMoveMessages(requests []struct {
-	AccountName    string
-	SourceMailbox  string
-	MessageID      string
-	TargetMailbox  string
+	AccountName   string
+	SourceMailbox string
+	MessageID     string
+	TargetMailbox string
 }) error {
 	if len(requests) == 0 {
 		return nil
@@ -1674,10 +1052,10 @@ func (c *Client) BulkMoveMessages(requests []struct {
 	// Launch goroutine for each move operation
 	for _, req := range requests {
 		go func(r struct {
-			AccountName    string
-			SourceMailbox  string
-			MessageID      string
-			TargetMailbox  string
+			AccountName   string
+			SourceMailbox string
+			MessageID     string
+			TargetMailbox string
 		}) {
 			errors <- c.MoveMessage(r.AccountName, r.SourceMailbox, r.MessageID, r.TargetMailbox)
 		}(req)

@@ -21,9 +21,9 @@ var (
 	msgUnread        bool
 	msgFlaggedFilter bool
 	msgWithContent   bool
-	msgRead         bool
-	msgFlaggedSet   bool
-	msgSince        string
+	msgRead          bool
+	msgFlaggedSet    bool
+	msgSince         string
 	msgNoCache       bool
 	msgForceRefresh  bool
 )
@@ -225,8 +225,11 @@ var messagesDeleteCmd = &cobra.Command{
 var messagesArchiveCmd = &cobra.Command{
 	Use:   "archive [message-id]",
 	Short: "Archive a message",
-	Long:  `Move a message to the Archive mailbox.`,
-	Args:  cobra.ExactArgs(1),
+	Long: `Archive a message using Mail.app's provider-aware Archive action.
+
+The message ID may be Mail's local numeric ID or its RFC Message-ID.
+The terminal running mail-app-cli needs Accessibility access on macOS.`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		messageID := args[0]
 		if msgAccount == "" || msgMailbox == "" {

@@ -123,6 +123,11 @@ Archive a message:
 mail-app-cli messages archive <message-id> -a "Gmail" -m "INBOX"
 ```
 
+The archive command accepts either Mail's local numeric message ID or the
+message's RFC Message-ID. It invokes Mail.app's provider-aware Archive action,
+so macOS must grant Accessibility access to the terminal running
+`mail-app-cli`.
+
 Move a message to another mailbox:
 
 ```bash
