@@ -37,6 +37,7 @@ func TestEmbeddedScripts(t *testing.T) {
 		{name: "save_attachment", language: "JavaScript", source: saveAttachmentJXAScript},
 		{name: "search_messages_json", language: "JavaScript", source: searchMessagesJXAScript},
 		{name: "get_special_mailbox_json", language: "JavaScript", source: getSpecialMailboxJXAScript},
+		{name: "resolve_message_identity", language: "JavaScript", source: resolveMessageIdentityJXAScript},
 	}
 
 	for _, test := range tests {

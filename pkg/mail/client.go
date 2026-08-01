@@ -50,12 +50,13 @@ func (c *Client) runJXA(script string, args ...string) (string, error) {
 
 // Account represents a Mail.app account
 type Account struct {
-	ID           string
-	Name         string
-	EmailAddress string
-	AccountType  string
-	UserName     string
-	Enabled      bool
+	ID             string
+	Name           string
+	EmailAddress   string
+	EmailAddresses []string
+	AccountType    string
+	UserName       string
+	Enabled        bool
 }
 
 // Mailbox represents a Mail.app mailbox

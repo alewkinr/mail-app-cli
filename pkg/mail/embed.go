@@ -68,4 +68,7 @@ var (
 
 	//go:embed scripts/get_special_mailbox_json.scpt
 	getSpecialMailboxJXAScript string
+
+	//go:embed scripts/resolve_message_identity.scpt
+	resolveMessageIdentityJXAScript string
 )

@@ -1,11 +1,16 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"time"
 
+	"github.com/intelligrit/mail-app-cli/internal/archive"
+	"github.com/intelligrit/mail-app-cli/internal/gmailauth"
 	"github.com/intelligrit/mail-app-cli/pkg/cache"
 	"github.com/intelligrit/mail-app-cli/pkg/mail"
 	"github.com/spf13/cobra"
@@ -225,10 +230,11 @@ var messagesDeleteCmd = &cobra.Command{
 var messagesArchiveCmd = &cobra.Command{
 	Use:   "archive [message-id]",
 	Short: "Archive a message",
-	Long: `Archive a message using Mail.app's provider-aware Archive action.
+	Long: `Archive a message by its Mail.app-local message ID.
 
-The message ID may be Mail's local numeric ID or its RFC Message-ID.
-The terminal running mail-app-cli needs Accessibility access on macOS.`,
+Linked Gmail accounts use the Gmail API and do not require Accessibility access.
+Unlinked accounts use Mail.app's Archive action and require Accessibility access
+for the terminal running mail-app-cli.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		messageID := args[0]
@@ -236,19 +242,61 @@ The terminal running mail-app-cli needs Accessibility access on macOS.`,
 			return fmt.Errorf("both --account and --mailbox are required")
 		}
 
-		client := mail.NewClient()
-		err := client.ArchiveMessage(msgAccount, msgMailbox, messageID)
-		if err != nil {
-			return fmt.Errorf("failed to archive message: %w", err)
-		}
-		invalidateMailboxCache(msgAccount, msgMailbox)
-		// Also invalidate the archive mailbox (provider-dependent name)
-		invalidateMailboxCache(msgAccount, "Archive")
-		invalidateMailboxCache(msgAccount, "All Mail")
-
-		fmt.Println("Message archived")
-		return nil
+		return runArchive(
+			cmd.Context(),
+			newProductionArchiveCommandDeps(),
+			msgAccount,
+			msgMailbox,
+			messageID,
+		)
 	},
+}
+
+type ArchiveService interface {
+	Archive(context.Context, archive.Request) (archive.Result, error)
+}
+
+type archiveCommandDeps struct {
+	Service                ArchiveService
+	InvalidateMailboxCache func(string, string)
+	Stdout                 io.Writer
+}
+
+func newProductionArchiveCommandDeps() archiveCommandDeps {
+	mailClient := mail.NewClient()
+	store := gmailauth.NewStore()
+	return archiveCommandDeps{
+		Service: archive.NewService(
+			mailClient,
+			mailClient,
+			store,
+			archive.NewGmailClientFactory(store),
+		),
+		InvalidateMailboxCache: invalidateMailboxCache,
+		Stdout:                 os.Stdout,
+	}
+}
+
+func runArchive(
+	ctx context.Context,
+	deps archiveCommandDeps,
+	account,
+	mailbox,
+	localMessageID string,
+) error {
+	if _, err := deps.Service.Archive(ctx, archive.Request{
+		AccountName:    account,
+		MailboxName:    mailbox,
+		LocalMessageID: localMessageID,
+	}); err != nil {
+		return fmt.Errorf("failed to archive message: %w", err)
+	}
+
+	deps.InvalidateMailboxCache(account, mailbox)
+	deps.InvalidateMailboxCache(account, "Archive")
+	deps.InvalidateMailboxCache(account, "All Mail")
+	_, err := fmt.Fprintln(writerOrDiscard(deps.Stdout), "Message archived")
+	return err
 }
 
 var messagesMoveCmd = &cobra.Command{

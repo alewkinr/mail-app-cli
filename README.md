@@ -26,6 +26,10 @@ A command-line interface for controlling macOS Mail.app. Provides complete scrip
 go install github.com/intelligrit/mail-app-cli@latest
 ```
 
+An ordinary source build retains Mail.app-based archiving but does not contain
+the maintainer-owned Gmail OAuth client credentials. Install a Gmail-enabled
+release if you want API-based Gmail archiving.
+
 ### Build Locally
 
 ```bash
@@ -33,6 +37,26 @@ git clone https://github.com/intelligrit/mail-app-cli.git
 cd mail-app-cli
 go build -o mail-app-cli
 ```
+
+Gmail API support is macOS-only and uses the native login Keychain. Local and
+release builds that include it require CGO (`CGO_ENABLED=1`). Maintainers build
+a Gmail-enabled binary with:
+
+```bash
+GMAIL_OAUTH_CLIENT_ID=your-desktop-client-id.apps.googleusercontent.com \
+GMAIL_OAUTH_CLIENT_SECRET=your-desktop-client-secret \
+make build-gmail
+```
+
+End users do not run that command or supply either application credential.
+The Desktop client secret is maintainer build metadata, not a Gmail password or
+user token. Google notes that installed applications cannot keep this value
+confidential, so it must not be used as an authorization boundary.
+
+The Google Cloud project that owns the Desktop OAuth client must also have the
+Gmail API enabled. If profile validation returns HTTP 403, enable the Gmail API
+for that project first; if it is already enabled, check Workspace API policy
+and project quota.
 
 ## Usage
 
@@ -123,10 +147,71 @@ Archive a message:
 mail-app-cli messages archive <message-id> -a "Gmail" -m "INBOX"
 ```
 
-The archive command accepts either Mail's local numeric message ID or the
-message's RFC Message-ID. It invokes Mail.app's provider-aware Archive action,
-so macOS must grant Accessibility access to the terminal running
+The archive command accepts Mail's local message ID. Linked Gmail accounts
+remove the `INBOX` label through the Gmail API and do not need Accessibility
+access. Unlinked accounts continue to use Mail.app's provider-aware Archive
+action, which requires Accessibility access for the terminal running
 `mail-app-cli`.
+
+### Gmail authorization
+
+Install a maintainer-built Gmail-enabled release, then authorize the Gmail
+address associated with a specific Mail.app account:
+
+```bash
+mail-app-cli gmail auth login --account "Gmail"
+```
+
+Login prints Google's authorization URL and waits for the loopback callback;
+it does not open a browser. Open the printed URL in the browser where you want
+to choose the Google account. The `--account` value is the Mail.app account
+name; it determines which local account ID owns the authorization in Keychain
+and which Gmail address must be selected.
+
+The callback page confirms only that the OAuth response reached the CLI.
+Login is complete only when the terminal prints the Mail.app account name and
+verified Gmail address. If the terminal reports that the login Keychain is
+unavailable, lock and unlock the `login` Keychain in Keychain Access, then run
+the login command again.
+
+List every linked account:
+
+```bash
+mail-app-cli gmail auth status
+```
+
+Narrow status to one Mail.app account, including an unlinked account:
+
+```bash
+mail-app-cli gmail auth status --account "Gmail"
+```
+
+After login, archive normally with the local message ID:
+
+```bash
+mail-app-cli messages archive <message-id> --account "Gmail" --mailbox "INBOX"
+```
+
+Remove the local Keychain authorization:
+
+```bash
+mail-app-cli gmail auth logout --account "Gmail"
+```
+
+Revoke the Google grant before deleting the local record:
+
+```bash
+mail-app-cli gmail auth logout --account "Gmail" --revoke
+```
+
+Login and logout require `--account`. Status lists all linked accounts unless
+`--account` narrows it.
+
+Users do **not** create a Google Cloud project, enable an API, download a
+credential file, or provide a Gmail password, app password, OAuth client
+credential, or OAuth client ID. The release contains the Desktop application's
+client credentials, while each user's private OAuth tokens remain in macOS
+Keychain.
 
 Move a message to another mailbox:
 

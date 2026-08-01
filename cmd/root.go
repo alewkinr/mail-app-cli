@@ -30,4 +30,5 @@ func init() {
 	rootCmd.AddCommand(attachmentsCmd)
 	rootCmd.AddCommand(searchCmd)
 	rootCmd.AddCommand(syncCmd)
+	rootCmd.AddCommand(newGmailCmd(newProductionGmailCommandDeps()))
 }
