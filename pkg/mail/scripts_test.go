@@ -67,6 +67,28 @@ func TestEmbeddedScripts(t *testing.T) {
 	}
 }
 
+func TestArchiveScriptUsesDirectMailboxAssignment(t *testing.T) {
+	for _, forbidden := range []string{
+		"System Events",
+		"archiveThroughMailUI",
+		"delay(",
+	} {
+		if strings.Contains(archiveJXAScript, forbidden) {
+			t.Fatalf("archive script still contains UI-only construct %q", forbidden)
+		}
+	}
+
+	for _, required := range []string{
+		"findMailbox(account.mailboxes(), 'Archive')",
+		"targetMessage.mailbox = archiveMailbox",
+		"findMessageByMessageId(sourceMailbox, messageId)",
+	} {
+		if !strings.Contains(archiveJXAScript, required) {
+			t.Fatalf("archive script is missing direct-archive construct %q", required)
+		}
+	}
+}
+
 func TestRunJXA(t *testing.T) {
 	if runtime.GOOS != "darwin" {
 		t.Skip("osascript is only available on macOS")

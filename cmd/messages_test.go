@@ -55,9 +55,8 @@ func TestMessagesArchivePublicShape(t *testing.T) {
 		t.Fatal("archive mailbox flag is not -m/--mailbox")
 	}
 	if !strings.Contains(messagesArchiveCmd.Long, "Gmail API") ||
-		!strings.Contains(messagesArchiveCmd.Long, "do not require Accessibility") ||
-		!strings.Contains(messagesArchiveCmd.Long, "require Accessibility") {
-		t.Fatalf("archive help does not explain linked/unlinked Accessibility behavior")
+		!strings.Contains(messagesArchiveCmd.Long, "Archive mailbox") {
+		t.Fatalf("archive help does not explain linked/unlinked backend behavior")
 	}
 	if strings.Contains(messagesArchiveCmd.Long, "RFC Message-ID") {
 		t.Fatal("archive help still advertises direct RFC Message-ID input")

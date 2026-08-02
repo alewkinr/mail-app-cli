@@ -232,9 +232,9 @@ var messagesArchiveCmd = &cobra.Command{
 	Short: "Archive a message",
 	Long: `Archive a message by its Mail.app-local message ID.
 
-Linked Gmail accounts use the Gmail API and do not require Accessibility access.
-Unlinked accounts use Mail.app's Archive action and require Accessibility access
-for the terminal running mail-app-cli.`,
+Linked Gmail accounts remove the INBOX label through the Gmail API. Unlinked
+accounts move the message directly to the account's Archive mailbox through
+Mail.app.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		messageID := args[0]

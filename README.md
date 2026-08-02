@@ -148,10 +148,8 @@ mail-app-cli messages archive <message-id> -a "Gmail" -m "INBOX"
 ```
 
 The archive command accepts Mail's local message ID. Linked Gmail accounts
-remove the `INBOX` label through the Gmail API and do not need Accessibility
-access. Unlinked accounts continue to use Mail.app's provider-aware Archive
-action, which requires Accessibility access for the terminal running
-`mail-app-cli`.
+remove the `INBOX` label through the Gmail API. Unlinked accounts move the
+message directly to the account's `Archive` mailbox through Mail.app.
 
 ### Gmail authorization
 

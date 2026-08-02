@@ -407,9 +407,9 @@ func (c *Client) GetMessageDetailsJSON(accountName, mailboxName, messageID strin
 	return &message, nil
 }
 
-// ArchiveMessage archives a message using Mail.app's provider-aware Archive
-// action. The script accepts either Mail's local numeric ID or the stable
-// Message-ID header, then uses the stable Message-ID to verify source removal.
+// ArchiveMessage moves a message to the account's Archive mailbox through
+// Mail.app's object model. The script accepts Mail's local numeric ID and
+// uses the stable Message-ID to verify source removal.
 func (c *Client) ArchiveMessage(accountName, mailboxName, messageID string) error {
 	output, err := c.runJXA(
 		archiveJXAScript,
