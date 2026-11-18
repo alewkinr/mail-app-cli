@@ -25,7 +25,6 @@ var (
 	msgOffset        int
 	msgUnread        bool
 	msgFlaggedFilter bool
-	msgWithContent   bool
 	msgRead          bool
 	msgFlaggedSet    bool
 	msgSince         string
@@ -51,7 +50,8 @@ func sanitizeCacheKey(s string) string {
 func invalidateMailboxCache(account, mailbox string) {
 	if c, err := cache.New(); err == nil {
 		prefix := fmt.Sprintf("msgs-%s-%s-", sanitizeCacheKey(account), sanitizeCacheKey(mailbox))
-		c.DeletePrefix(prefix)
+		// Cache invalidation is best effort after a successful mutation.
+		_ = c.DeletePrefix(prefix)
 	}
 }
 
@@ -72,16 +72,15 @@ var messagesListCmd = &cobra.Command{
 
 		// Build a cache key that encodes all query parameters so different queries
 		// get separate cache entries.
-		cacheKey := fmt.Sprintf("msgs-%s-%s-%d-%d-%v-%v-%s-%v",
+		cacheKey := fmt.Sprintf("msgs-%s-%s-v3-%d-%d-%v-%v-%s",
 			sanitizeCacheKey(msgAccount),
 			sanitizeCacheKey(msgMailbox),
 			msgLimit, msgOffset,
 			msgUnread, msgFlaggedFilter,
 			sanitizeCacheKey(msgSince),
-			msgWithContent,
 		)
 
-		// Try cache first (skip if content requested — content is per-user and typically large)
+		// Try the metadata cache first.
 		if !msgNoCache && !msgForceRefresh {
 			c, err := cache.New()
 			if err == nil {
@@ -100,7 +99,7 @@ var messagesListCmd = &cobra.Command{
 		}
 
 		client := mail.NewClient()
-		messages, err := client.GetMessagesJSON(msgAccount, msgMailbox, msgLimit, msgOffset, msgUnread, msgFlaggedFilter, msgWithContent, msgSince)
+		messages, err := client.GetMessagesJSON(msgAccount, msgMailbox, msgLimit, msgOffset, msgUnread, msgFlaggedFilter, msgSince)
 		if err != nil {
 			return fmt.Errorf("failed to get messages: %w", err)
 		}
@@ -109,7 +108,8 @@ var messagesListCmd = &cobra.Command{
 		if !msgNoCache {
 			if c, err := cache.New(); err == nil {
 				c.SetTTL(messageCacheTTL)
-				c.Set(cacheKey, messages)
+				// Cache writes are best effort.
+				_ = c.Set(cacheKey, messages)
 			}
 		}
 
@@ -123,31 +123,62 @@ var messagesListCmd = &cobra.Command{
 	},
 }
 
-var messagesShowCmd = &cobra.Command{
-	Use:   "show [message-id]",
-	Short: "Show message details",
-	Long:  `Show full details of a specific message. Output is JSON format.`,
-	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		messageID := args[0]
-		if msgAccount == "" || msgMailbox == "" {
-			return fmt.Errorf("both --account and --mailbox are required")
-		}
+var messagesShowCmd = newMessagesShowCmd(mail.NewClient().GetMessageDetailsBatch)
 
-		client := mail.NewClient()
-		message, err := client.GetMessageDetailsJSON(msgAccount, msgMailbox, messageID)
-		if err != nil {
-			return fmt.Errorf("failed to get message: %w", err)
-		}
+func newMessagesShowCmd(readDetails func(account, mailbox string, ids []string, byRFCID bool) ([]mail.MessageDetail, error)) *cobra.Command {
+	var rfcIDs []string
+	cmd := &cobra.Command{
+		Use:   "show [local-id ...]",
+		Short: "Show message details",
+		Long: "Show full details for messages in one account and mailbox as a JSON array. " +
+			"Use positional local IDs or repeat --rfc-message-id.",
+		// Execute prints the returned error. Suppress Cobra's duplicate output and usage.
+		SilenceErrors: true,
+		SilenceUsage:  true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			byRFCID := cmd.Flags().Changed("rfc-message-id")
+			if byRFCID && len(args) != 0 {
+				return fmt.Errorf("use positional local IDs or --rfc-message-id")
+			}
+			ids := args
+			if byRFCID {
+				ids = rfcIDs
+			}
+			if len(ids) == 0 {
+				return fmt.Errorf("at least one message ID is required")
+			}
+			for _, id := range ids {
+				if strings.TrimSpace(id) == "" {
+					return fmt.Errorf("message IDs must be nonempty")
+				}
+			}
+			account, err := cmd.Flags().GetString("account")
+			if err != nil {
+				return err
+			}
+			mailbox, err := cmd.Flags().GetString("mailbox")
+			if err != nil {
+				return err
+			}
+			if account == "" || mailbox == "" {
+				return fmt.Errorf("both --account and --mailbox are required")
+			}
 
-		output, err := json.MarshalIndent(message, "", "  ")
-		if err != nil {
-			return fmt.Errorf("failed to marshal message: %w", err)
-		}
+			messages, err := readDetails(account, mailbox, ids, byRFCID)
+			if err != nil {
+				return err
+			}
 
-		fmt.Println(string(output))
-		return nil
-	},
+			encoder := json.NewEncoder(cmd.OutOrStdout())
+			encoder.SetIndent("", "  ")
+			if err := encoder.Encode(messages); err != nil {
+				return fmt.Errorf("write message details: %w", err)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().StringArrayVar(&rfcIDs, "rfc-message-id", nil, "RFC Message-ID to look up (repeatable)")
+	return cmd
 }
 
 var messagesMarkCmd = &cobra.Command{
@@ -332,7 +363,7 @@ func newUnifiedCmd(use, short, mailboxType string) *cobra.Command {
 		Short: short,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client := mail.NewClient()
-			messages, err := client.GetUnifiedMessagesJSON(mailboxType, msgLimit, msgOffset, msgWithContent)
+			messages, err := client.GetUnifiedMessagesJSON(mailboxType, msgLimit, msgOffset)
 			if err != nil {
 				return fmt.Errorf("failed to get %s messages: %w", mailboxType, err)
 			}
@@ -416,7 +447,6 @@ func init() {
 	messagesListCmd.Flags().IntVarP(&msgOffset, "offset", "o", 0, "Number of messages to skip (for pagination)")
 	messagesListCmd.Flags().BoolVarP(&msgUnread, "unread", "u", false, "Show only unread messages")
 	messagesListCmd.Flags().BoolVarP(&msgFlaggedFilter, "flagged", "f", false, "Show only flagged messages")
-	messagesListCmd.Flags().BoolVar(&msgWithContent, "with-content", false, "Include message content (slower but better for accessibility)")
 	messagesListCmd.Flags().StringVarP(&msgSince, "since", "s", "", "Show messages since date (format: YYYY-MM-DD or YYYY-MM-DD HH:MM:SS)")
 	messagesListCmd.Flags().BoolVar(&msgNoCache, "no-cache", false, "Bypass cache and fetch fresh data")
 	messagesListCmd.Flags().BoolVar(&msgForceRefresh, "force-refresh", false, "Force refresh cache with fresh data")
@@ -434,6 +464,5 @@ func init() {
 	} {
 		cmd.Flags().IntVarP(&msgLimit, "limit", "l", 25, "Maximum number of messages to return")
 		cmd.Flags().IntVarP(&msgOffset, "offset", "o", 0, "Number of messages to skip (pagination)")
-		cmd.Flags().BoolVar(&msgWithContent, "with-content", false, "Include message content")
 	}
 }

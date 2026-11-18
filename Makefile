@@ -11,3 +11,15 @@ build: check-gmail-oauth-client
 
 install: check-gmail-oauth-client
 	@go install -ldflags "$(gmail-ldflags)"
+
+.PHONY: lint
+
+GOLANGCI_LINT ?= golangci-lint
+GOLANGCI_LINT_VERSION := 2.15.0
+
+lint:
+	@$(GOLANGCI_LINT) version | grep -Eq ' version v?$(subst .,[.],$(GOLANGCI_LINT_VERSION)) ' || { \
+		echo "Install golangci-lint v$(GOLANGCI_LINT_VERSION) or set GOLANGCI_LINT to its path." >&2; \
+		exit 1; \
+	}
+	@$(GOLANGCI_LINT) run ./...

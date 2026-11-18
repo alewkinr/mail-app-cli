@@ -4,10 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"reflect"
+
 	"strings"
 	"testing"
 
 	"github.com/intelligrit/mail-app-cli/internal/archive"
+	"github.com/intelligrit/mail-app-cli/pkg/mail"
+
 	"github.com/spf13/cobra"
 )
 
@@ -140,3 +144,65 @@ func TestMessagesArchiveCommandStillRequiresAccountAndMailbox(t *testing.T) {
 }
 
 type archiveContextKey struct{}
+
+func TestMessagesShowSelectors(t *testing.T) {
+	tests := []struct {
+		name  string
+		args  []string
+		ids   []string
+		byRFC bool
+	}{
+		{name: "local IDs", args: []string{"42", "7"}, ids: []string{"42", "7"}},
+		{name: "RFC IDs", args: []string{"--rfc-message-id", "<one@example.com>", "--rfc-message-id", "two@example.com"}, ids: []string{"<one@example.com>", "two@example.com"}, byRFC: true},
+		{name: "mixed", args: []string{"42", "--rfc-message-id", "one@example.com"}},
+		{name: "no IDs"},
+		{name: "empty RFC ID", args: []string{"--rfc-message-id", ""}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var stdout bytes.Buffer
+			var calls int
+			cmd := newMessagesShowCmd(func(account, mailbox string, ids []string, byRFC bool) ([]mail.MessageDetail, error) {
+				calls++
+				if account != "Personal" || mailbox != "INBOX" || byRFC != test.byRFC || !reflect.DeepEqual(ids, test.ids) {
+					t.Errorf("show read request = %q %q %q, byRFC=%t", account, mailbox, ids, byRFC)
+				}
+				return []mail.MessageDetail{{Message: mail.Message{ID: "42"}}}, nil
+			})
+			root := newShowTestRoot(cmd, &stdout, test.args)
+			err := root.Execute()
+			if test.ids == nil {
+				if err == nil || calls != 0 || stdout.Len() != 0 {
+					t.Fatalf("invalid request produced error %v, %d reads, stdout %q", err, calls, stdout.String())
+				}
+				return
+			}
+			if err != nil || calls != 1 || !strings.HasPrefix(stdout.String(), "[") {
+				t.Fatalf("show produced error %v, %d reads, stdout %q", err, calls, stdout.String())
+			}
+		})
+	}
+}
+
+func TestMessagesShowFailedBatchLeavesStdoutEmpty(t *testing.T) {
+	var stdout bytes.Buffer
+	wantErr := errors.New("missing ID")
+	cmd := newMessagesShowCmd(func(string, string, []string, bool) ([]mail.MessageDetail, error) {
+		return nil, wantErr
+	})
+	root := newShowTestRoot(cmd, &stdout, []string{"42", "7"})
+	if err := root.Execute(); !errors.Is(err, wantErr) || stdout.Len() != 0 {
+		t.Fatalf("failed show produced error %v and stdout %q", err, stdout.String())
+	}
+}
+
+func newShowTestRoot(cmd *cobra.Command, stdout *bytes.Buffer, showArgs []string) *cobra.Command {
+	root := &cobra.Command{Use: "test"}
+	root.PersistentFlags().StringP("account", "a", "", "")
+	root.PersistentFlags().StringP("mailbox", "m", "", "")
+	root.AddCommand(cmd)
+	root.SetOut(stdout)
+	root.SetArgs(append([]string{"show", "-a", "Personal", "-m", "INBOX"}, showArgs...))
+	return root
+}

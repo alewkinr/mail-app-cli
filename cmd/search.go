@@ -18,7 +18,7 @@ var searchCmd = &cobra.Command{
 	Use:   "search [query]",
 	Short: "Search for messages",
 	Long: `Search for messages across mailboxes.
-The query will search in subject and sender (content search disabled for performance).
+Search matches subject and sender and returns message metadata.
 By default searches INBOX of all accounts. Use --account and --mailbox to narrow the search.
 Output is JSON format. Use jq for advanced filtering: mail-app-cli search "query" | jq '.[] | select(.read==false)'`,
 	Args: cobra.ExactArgs(1),

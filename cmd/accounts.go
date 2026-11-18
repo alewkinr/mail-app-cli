@@ -54,7 +54,8 @@ var accountsListCmd = &cobra.Command{
 		if !accountsNoCache {
 			c, err := cache.New()
 			if err == nil {
-				c.Set("accounts", accounts)
+				// Cache writes are best effort.
+				_ = c.Set("accounts", accounts)
 			}
 		}
 

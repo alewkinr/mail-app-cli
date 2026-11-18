@@ -1,8 +1,8 @@
 package cmd
 
 import (
-	"os"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/intelligrit/mail-app-cli/pkg/mail"
@@ -62,7 +62,7 @@ func init() {
 	sendCmd.Flags().StringVarP(&sendBody, "body", "", "", "Email body content")
 	sendCmd.Flags().StringSliceVar(&sendAttachments, "attach", []string{}, "File paths to attach (can be specified multiple times)")
 
-	sendCmd.MarkFlagRequired("account")
-	sendCmd.MarkFlagRequired("to")
-	sendCmd.MarkFlagRequired("subject")
+	mustMarkFlagRequired(sendCmd, "account")
+	mustMarkFlagRequired(sendCmd, "to")
+	mustMarkFlagRequired(sendCmd, "subject")
 }

@@ -18,8 +18,6 @@ func TestEmbeddedScripts(t *testing.T) {
 		{name: "get_accounts", language: "AppleScript", source: getAccountsAppleScript},
 		{name: "get_mailboxes", language: "AppleScript", source: getMailboxesAppleScript},
 		{name: "get_all_mailboxes", language: "AppleScript", source: getAllMailboxesAppleScript},
-		{name: "get_messages", language: "AppleScript", source: getMessagesAppleScript},
-		{name: "search_messages", language: "AppleScript", source: searchMessagesAppleScript},
 		{name: "mark_message_read", language: "JavaScript", source: markMessageReadJXAScript},
 		{name: "flag_message", language: "JavaScript", source: flagMessageJXAScript},
 		{name: "delete_message", language: "JavaScript", source: deleteMessageJXAScript},
@@ -29,15 +27,12 @@ func TestEmbeddedScripts(t *testing.T) {
 		{name: "sync_account", language: "AppleScript", source: syncAccountAppleScript},
 		{name: "sync_all_accounts", language: "AppleScript", source: syncAllAccountsAppleScript},
 		{name: "get_mailboxes_json", language: "JavaScript", source: getMailboxesJXAScript},
-		{name: "get_messages_json", language: "JavaScript", source: getMessagesJXAScript},
-		{name: "get_message_details_json", language: "JavaScript", source: getMessageDetailsJXAScript},
 		{name: "archive", language: "JavaScript", source: archiveJXAScript},
 		{name: "move_message", language: "JavaScript", source: moveMessageJXAScript},
 		{name: "get_attachments_json", language: "JavaScript", source: getAttachmentsJXAScript},
 		{name: "save_attachment", language: "JavaScript", source: saveAttachmentJXAScript},
-		{name: "search_messages_json", language: "JavaScript", source: searchMessagesJXAScript},
-		{name: "get_special_mailbox_json", language: "JavaScript", source: getSpecialMailboxJXAScript},
 		{name: "resolve_message_identity", language: "JavaScript", source: resolveMessageIdentityJXAScript},
+		{name: "read_messages", language: "JavaScript", source: readMessagesJXAScript},
 	}
 
 	for _, test := range tests {

@@ -61,7 +61,8 @@ var mailboxesListCmd = &cobra.Command{
 		if !mailboxNoCache {
 			c, err := cache.New()
 			if err == nil {
-				c.Set(cacheKey, mailboxes)
+				// Cache writes are best effort.
+				_ = c.Set(cacheKey, mailboxes)
 			}
 		}
 

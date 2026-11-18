@@ -80,7 +80,8 @@ func (revoker *googleRevoker) Revoke(ctx context.Context, refreshToken string) e
 		}
 		return errors.New("Google OAuth revocation request failed")
 	}
-	defer response.Body.Close()
+	// Closing this read-only body cannot change the revocation result.
+	defer func() { _ = response.Body.Close() }()
 
 	data, err := io.ReadAll(io.LimitReader(response.Body, maxRevocationResponseSize+1))
 	if err != nil {

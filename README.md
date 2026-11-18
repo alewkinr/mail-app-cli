@@ -115,11 +115,35 @@ mail-app-cli messages list -a "Gmail" -m "INBOX" --since "2025-12-14 09:00:00"
 mail-app-cli messages list -a "Gmail" -m "INBOX" --unread --since "2025-12-01" --limit 10
 ```
 
-Show full message details:
+List, inbox, other mailbox views, and search return message metadata. Each
+result includes the Mail.app local `id`, `account`, `mailbox`, and
+`rfcMessageID`. The RFC Message-ID is `null` when unavailable.
+
+Use `messages show` for bodies, recipients, and message sizes. Pass one or more
+local IDs with the account and mailbox from their metadata results, or repeat
+`--rfc-message-id` to look up RFC Message-IDs within that mailbox.
 
 ```bash
-mail-app-cli messages show <message-id> -a "Gmail" -m "INBOX"
+mail-app-cli messages show 123 456 -a "Gmail" -m "INBOX"
+
+mail-app-cli messages show -a "Gmail" -m "INBOX" \
+  --rfc-message-id '<first@example.com>' \
+  --rfc-message-id '<second@example.com>'
 ```
+
+`show` accepts one ID type per call and returns a JSON array in request order,
+even for a single ID. If any ID is missing or ambiguous, the command exits
+with a nonzero status and empty stdout. It reports each unresolved ID on
+stderr. An ambiguous
+RFC Message-ID error includes the matching local IDs for retrying with a
+specific message.
+
+**Migrating from v2.** Replace any use of `--with-content` with a metadata
+request followed by `messages show`. For scripts that previously consumed a
+single object from `show`, read the first array element, such as
+`.[0].content` in jq. Message JSON uses lower camel case keys, so use `id`
+in place of `ID` and `content` in place of `Content`. Write commands
+continue to take local IDs.
 
 Mark message as read/unread:
 

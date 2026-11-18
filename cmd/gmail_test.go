@@ -598,13 +598,6 @@ func executeCobra(command *cobra.Command, args ...string) error {
 	return command.Execute()
 }
 
-func walkCommands(command *cobra.Command, visit func(*cobra.Command)) {
-	visit(command)
-	for _, child := range command.Commands() {
-		walkCommands(child, visit)
-	}
-}
-
 func assertExactCommandFlags(t *testing.T, command *cobra.Command, expected ...string) {
 	t.Helper()
 	want := make(map[string]bool, len(expected)+1)

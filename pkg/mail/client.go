@@ -67,23 +67,28 @@ type Mailbox struct {
 	Account     string
 }
 
-// Message represents an email message
+// Message contains metadata for an email in a Mail.app mailbox.
 type Message struct {
-	ID            string
-	Subject       string
-	Sender        string
-	DateSent      string
-	DateReceived  string
-	Read          bool
-	Flagged       bool
-	Deleted       bool
-	MessageSize   int
-	Content       string
-	Mailbox       string
-	Account       string
-	ToRecipients  []string
-	CcRecipients  []string
-	BccRecipients []string
+	ID           string  `json:"id"`
+	RFCMessageID *string `json:"rfcMessageID"`
+	Subject      string  `json:"subject"`
+	Sender       string  `json:"sender"`
+	DateSent     string  `json:"dateSent"`
+	DateReceived string  `json:"dateReceived"`
+	Read         bool    `json:"read"`
+	Flagged      bool    `json:"flagged"`
+	Mailbox      string  `json:"mailbox"`
+	Account      string  `json:"account"`
+}
+
+// MessageDetail contains metadata and the full content of an email.
+type MessageDetail struct {
+	Message
+	MessageSize   int      `json:"messageSize"`
+	Content       string   `json:"content"`
+	ToRecipients  []string `json:"toRecipients"`
+	CcRecipients  []string `json:"ccRecipients"`
+	BccRecipients []string `json:"bccRecipients"`
 }
 
 // Attachment represents an email attachment
@@ -125,37 +130,6 @@ func (c *Client) GetAllMailboxes() ([]Mailbox, error) {
 
 	mailboxes, err := c.parseMailboxes(output)
 	return mailboxes, err
-}
-
-// GetMessages retrieves messages from a mailbox
-func (c *Client) GetMessages(accountName, mailboxName string, limit int) ([]Message, error) {
-	output, err := c.runAppleScript(
-		getMessagesAppleScript,
-		accountName,
-		mailboxName,
-		strconv.Itoa(limit),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	messages, err := c.parseMessages(output)
-	return messages, err
-}
-
-// SearchMessages searches for messages matching a query
-func (c *Client) SearchMessages(query string, limit int) ([]Message, error) {
-	output, err := c.runAppleScript(
-		searchMessagesAppleScript,
-		query,
-		strconv.Itoa(limit),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	messages, err := c.parseMessages(output)
-	return messages, err
 }
 
 // MarkMessageAsRead marks a message as read
@@ -238,12 +212,6 @@ func (c *Client) parseMailboxes(_ string) ([]Mailbox, error) {
 	return []Mailbox{}, nil
 }
 
-// Helper function to parse messages from AppleScript output
-func (c *Client) parseMessages(_ string) ([]Message, error) {
-	// TODO: Implement proper parsing based on AppleScript record format
-	return []Message{}, nil
-}
-
 // GetUnreadCount gets the total unread message count
 func (c *Client) GetUnreadCount() (int, error) {
 	output, err := c.runAppleScript(getUnreadCountAppleScript)
@@ -252,7 +220,9 @@ func (c *Client) GetUnreadCount() (int, error) {
 	}
 
 	var count int
-	fmt.Sscanf(output, "%d", &count)
+	if _, err := fmt.Sscanf(output, "%d", &count); err != nil {
+		return 0, fmt.Errorf("parse unread message count: %w", err)
+	}
 	return count, nil
 }
 
@@ -363,16 +333,16 @@ func (c *Client) getMailboxesForSingleAccount(accountName string) ([]Mailbox, er
 }
 
 // GetMessagesJSON retrieves messages from a mailbox using JXA
-func (c *Client) GetMessagesJSON(accountName, mailboxName string, limit, offset int, unreadOnly, flaggedOnly, withContent bool, since string) ([]Message, error) {
+func (c *Client) GetMessagesJSON(accountName, mailboxName string, limit, offset int, unreadOnly, flaggedOnly bool, since string) ([]Message, error) {
 	output, err := c.runJXA(
-		getMessagesJXAScript,
+		readMessagesJXAScript,
+		"list",
 		accountName,
 		mailboxName,
 		strconv.Itoa(limit),
 		strconv.Itoa(offset),
 		strconv.FormatBool(unreadOnly),
 		strconv.FormatBool(flaggedOnly),
-		strconv.FormatBool(withContent),
 		since,
 	)
 	if err != nil {
@@ -387,24 +357,62 @@ func (c *Client) GetMessagesJSON(accountName, mailboxName string, limit, offset 
 	return messages, nil
 }
 
-// GetMessageDetailsJSON retrieves full details of a specific message
-func (c *Client) GetMessageDetailsJSON(accountName, mailboxName, messageID string) (*Message, error) {
-	output, err := c.runJXA(
-		getMessageDetailsJXAScript,
-		accountName,
-		mailboxName,
-		messageID,
-	)
+// GetMessageDetailsJSON retrieves full details of a specific message.
+func (c *Client) GetMessageDetailsJSON(accountName, mailboxName, messageID string) (*MessageDetail, error) {
+	messages, err := c.GetMessageDetailsBatch(accountName, mailboxName, []string{messageID}, false)
 	if err != nil {
 		return nil, err
 	}
+	return &messages[0], nil
+}
 
-	var message Message
-	if err := json.Unmarshal([]byte(output), &message); err != nil {
-		return nil, fmt.Errorf("failed to parse message JSON: %w", err)
+// GetMessageDetailsBatch resolves IDs in one mailbox and loads details in request order.
+// If byRFCID is true, IDs refer to the RFC Message-ID header.
+func (c *Client) GetMessageDetailsBatch(account, mailbox string, ids []string, byRFCID bool) ([]MessageDetail, error) {
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("at least one message ID is required")
 	}
 
-	return &message, nil
+	selector := "local"
+	if byRFCID {
+		selector = "rfc"
+	}
+	args := append([]string{"show", account, mailbox, selector}, ids...)
+	output, err := c.runJXA(readMessagesJXAScript, args...)
+	if err != nil {
+		return nil, fmt.Errorf("read message details in account %q mailbox %q: %w", account, mailbox, err)
+	}
+	return decodeMessageDetailsBatch(output, account, mailbox, len(ids))
+}
+
+func decodeMessageDetailsBatch(output, account, mailbox string, count int) ([]MessageDetail, error) {
+	var result struct {
+		Messages []MessageDetail
+		Issues   []struct {
+			ID       string
+			Reason   string
+			LocalIDs []string
+		}
+	}
+	if err := json.Unmarshal([]byte(output), &result); err != nil {
+		return nil, fmt.Errorf("decode message details: %w", err)
+	}
+
+	if len(result.Issues) > 0 {
+		messages := make([]string, 0, len(result.Issues))
+		for _, issue := range result.Issues {
+			detail := fmt.Sprintf("%q (%s)", issue.ID, issue.Reason)
+			if len(issue.LocalIDs) > 0 {
+				detail = fmt.Sprintf("%q (%s; local IDs: %q)", issue.ID, issue.Reason, issue.LocalIDs)
+			}
+			messages = append(messages, detail)
+		}
+		return nil, fmt.Errorf("resolve messages in account %q mailbox %q: %s", account, mailbox, strings.Join(messages, ", "))
+	}
+	if len(result.Messages) != count {
+		return nil, fmt.Errorf("expected %d message details, got %d", count, len(result.Messages))
+	}
+	return result.Messages, nil
 }
 
 // ArchiveMessage moves a message to the account's Archive mailbox through
@@ -569,7 +577,8 @@ func (c *Client) SearchMessagesJSON(query string, accountName string, mailboxNam
 // searchMessagesInSingleMailbox searches for messages in a specific mailbox
 func (c *Client) searchMessagesInSingleMailbox(query, accountName, mailboxName string, limit int) ([]Message, error) {
 	output, err := c.runJXA(
-		searchMessagesJXAScript,
+		readMessagesJXAScript,
+		"search",
 		query,
 		accountName,
 		mailboxName,
@@ -595,7 +604,6 @@ func (c *Client) GetMessagesFromMultipleMailboxes(requests []struct {
 	Offset      int
 	UnreadOnly  bool
 	FlaggedOnly bool
-	WithContent bool
 	Since       string
 }) ([]Message, error) {
 	if len(requests) == 0 {
@@ -605,7 +613,7 @@ func (c *Client) GetMessagesFromMultipleMailboxes(requests []struct {
 	// If only one request, no need for parallelization
 	if len(requests) == 1 {
 		req := requests[0]
-		return c.GetMessagesJSON(req.AccountName, req.MailboxName, req.Limit, req.Offset, req.UnreadOnly, req.FlaggedOnly, req.WithContent, req.Since)
+		return c.GetMessagesJSON(req.AccountName, req.MailboxName, req.Limit, req.Offset, req.UnreadOnly, req.FlaggedOnly, req.Since)
 	}
 
 	// Load messages from multiple mailboxes in parallel
@@ -624,10 +632,9 @@ func (c *Client) GetMessagesFromMultipleMailboxes(requests []struct {
 			Offset      int
 			UnreadOnly  bool
 			FlaggedOnly bool
-			WithContent bool
 			Since       string
 		}) {
-			messages, err := c.GetMessagesJSON(r.AccountName, r.MailboxName, r.Limit, r.Offset, r.UnreadOnly, r.FlaggedOnly, r.WithContent, r.Since)
+			messages, err := c.GetMessagesJSON(r.AccountName, r.MailboxName, r.Limit, r.Offset, r.UnreadOnly, r.FlaggedOnly, r.Since)
 			results <- result{messages: messages, err: err}
 		}(req)
 	}
@@ -657,9 +664,9 @@ func (c *Client) GetMultipleMessageDetails(requests []struct {
 	AccountName string
 	MailboxName string
 	MessageID   string
-}) ([]*Message, error) {
+}) ([]*MessageDetail, error) {
 	if len(requests) == 0 {
-		return []*Message{}, nil
+		return []*MessageDetail{}, nil
 	}
 
 	// If only one request, no need for parallelization
@@ -669,12 +676,12 @@ func (c *Client) GetMultipleMessageDetails(requests []struct {
 		if err != nil {
 			return nil, err
 		}
-		return []*Message{msg}, nil
+		return []*MessageDetail{msg}, nil
 	}
 
 	// Load message details in parallel
 	type result struct {
-		message *Message
+		message *MessageDetail
 		err     error
 		index   int
 	}
@@ -693,7 +700,7 @@ func (c *Client) GetMultipleMessageDetails(requests []struct {
 	}
 
 	// Collect results in original order
-	messages := make([]*Message, len(requests))
+	messages := make([]*MessageDetail, len(requests))
 	var errors []error
 	successCount := 0
 
@@ -900,16 +907,6 @@ func (c *Client) BulkArchiveMessages(requests []struct {
 	return nil
 }
 
-// BulkMoveMessages moves multiple messages concurrently
-// GetUnifiedMessagesJSON retrieves messages from Mail.app's special unified
-// mailboxes (inboxes, sentMailboxes, draftMailboxes, trashMailboxes,
-// junkMailboxes) across all accounts in a single JXA call.
-//
-// mailboxType must be one of: "inbox", "unread", "sent", "drafts",
-// "trash", "junk", "flagged".
-//
-// "unread" and "flagged" are treated as inbox views with the appropriate
-// filter applied.
 // GetUnifiedMessagesJSON retrieves messages from unified views across all accounts.
 //
 // mailboxType must be one of: "inbox", "unread", "flagged", "sent", "drafts",
@@ -922,12 +919,12 @@ func (c *Client) BulkArchiveMessages(requests []struct {
 //
 // sent/drafts/trash/junk use Mail.app's JXA special-mailbox accessors
 // (mail.sentMailboxes() etc.) which don't require per-message filtering.
-func (c *Client) GetUnifiedMessagesJSON(mailboxType string, limit, offset int, withContent bool) ([]Message, error) {
+func (c *Client) GetUnifiedMessagesJSON(mailboxType string, limit, offset int) ([]Message, error) {
 	switch mailboxType {
 	case "inbox", "unread", "flagged":
-		return c.getInboxBasedUnified(mailboxType, limit, offset, withContent)
+		return c.getInboxBasedUnified(mailboxType, limit, offset)
 	case "sent", "drafts", "trash", "junk":
-		return c.getSpecialMailboxUnified(mailboxType, limit, offset, withContent)
+		return c.getSpecialMailboxUnified(mailboxType, limit, offset)
 	default:
 		return nil, fmt.Errorf("unknown unified mailbox type: %s", mailboxType)
 	}
@@ -935,7 +932,7 @@ func (c *Client) GetUnifiedMessagesJSON(mailboxType string, limit, offset int, w
 
 // getInboxBasedUnified fetches messages from each account's INBOX using the
 // proven GetMessagesJSON path, then merges, sorts, and slices globally.
-func (c *Client) getInboxBasedUnified(mailboxType string, limit, offset int, withContent bool) ([]Message, error) {
+func (c *Client) getInboxBasedUnified(mailboxType string, limit, offset int) ([]Message, error) {
 	accounts, err := c.GetAccountsJSON()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list accounts: %w", err)
@@ -954,7 +951,6 @@ func (c *Client) getInboxBasedUnified(mailboxType string, limit, offset int, wit
 		Offset      int
 		UnreadOnly  bool
 		FlaggedOnly bool
-		WithContent bool
 		Since       string
 	}
 
@@ -970,7 +966,6 @@ func (c *Client) getInboxBasedUnified(mailboxType string, limit, offset int, wit
 			Offset:      0,
 			UnreadOnly:  mailboxType == "unread",
 			FlaggedOnly: mailboxType == "flagged",
-			WithContent: withContent,
 		})
 	}
 
@@ -990,17 +985,17 @@ func (c *Client) getInboxBasedUnified(mailboxType string, limit, offset int, wit
 // mailbox collections (sentMailboxes, draftMailboxes, trashMailboxes,
 // junkMailboxes) via a single JXA call.  No per-message filtering is applied
 // since these views don't need unread/flagged filtering.
-func (c *Client) getSpecialMailboxUnified(mailboxType string, limit, offset int, withContent bool) ([]Message, error) {
+func (c *Client) getSpecialMailboxUnified(mailboxType string, limit, offset int) ([]Message, error) {
 	perLimit := limit + offset
 	if perLimit < 50 {
 		perLimit = 50
 	}
 
 	output, err := c.runJXA(
-		getSpecialMailboxJXAScript,
+		readMessagesJXAScript,
+		"special",
 		mailboxType,
 		strconv.Itoa(perLimit),
-		strconv.FormatBool(withContent),
 	)
 	if err != nil {
 		return nil, err
@@ -1031,6 +1026,7 @@ func sortAndSlice(messages []Message, offset, limit int) []Message {
 	return messages
 }
 
+// BulkMoveMessages moves multiple messages concurrently.
 func (c *Client) BulkMoveMessages(requests []struct {
 	AccountName   string
 	SourceMailbox string

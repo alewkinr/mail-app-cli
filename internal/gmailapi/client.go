@@ -193,7 +193,8 @@ func (client *Client) doJSON(
 		}
 		return fmt.Errorf("Gmail API %s request failed: %w", operation, err)
 	}
-	defer response.Body.Close()
+	// Closing this read-only body cannot change the parsed result.
+	defer func() { _ = response.Body.Close() }()
 
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return &HTTPError{

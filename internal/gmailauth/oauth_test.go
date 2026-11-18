@@ -584,7 +584,11 @@ func getOAuthCallback(
 	if err != nil {
 		t.Fatalf("send OAuth callback: %v", err)
 	}
-	defer response.Body.Close()
+	t.Cleanup(func() {
+		if err := response.Body.Close(); err != nil {
+			t.Errorf("close test response: %v", err)
+		}
+	})
 	body, err := io.ReadAll(response.Body)
 	if err != nil {
 		t.Fatalf("read OAuth callback response: %v", err)

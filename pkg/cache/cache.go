@@ -69,8 +69,8 @@ func (c *Cache) Get(key string, v any) (bool, error) {
 	}
 
 	if err := json.Unmarshal(data, v); err != nil {
-		// If unmarshal fails, delete the corrupted cache file
-		os.Remove(path)
+		// Try to delete the corrupt cache file, then report the decoding error.
+		_ = os.Remove(path)
 		return false, fmt.Errorf("failed to unmarshal cache data: %w", err)
 	}
 

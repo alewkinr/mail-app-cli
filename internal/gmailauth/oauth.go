@@ -267,9 +267,7 @@ func (authorizer *oauthAuthorizer) Authorize(
 		return AuthorizationRecord{}, gmailapi.NewProfileValidationError(err)
 	}
 	if !accountContainsEmail(request.MailAccount.EmailAddresses, profile.EmailAddress) {
-		return AuthorizationRecord{}, errors.New(
-			"Gmail profile does not match the selected Mail.app account",
-		)
+		return AuthorizationRecord{}, errors.New("Gmail profile does not match the selected Mail.app account")
 	}
 
 	record := AuthorizationRecord{
