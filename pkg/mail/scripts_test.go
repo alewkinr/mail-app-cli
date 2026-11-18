@@ -35,6 +35,7 @@ func TestEmbeddedScripts(t *testing.T) {
 		{name: "save_attachment", language: "JavaScript", source: saveAttachmentJXAScript},
 		{name: "resolve_message_identity", language: "JavaScript", source: resolveMessageIdentityJXAScript},
 		{name: "read_messages", language: "JavaScript", source: readMessagesJXAScript},
+		{name: "read_drafts", language: "JavaScript", source: readDraftsJXAScript},
 	}
 
 	for _, test := range tests {

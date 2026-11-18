@@ -66,13 +66,10 @@ before moving a draft.
     to the account's Trash. A missing or ambiguous account, folder, or draft
     fails before mutation.
 
-Serialize MailCLI creates per account across processes. Under that lock,
-snapshot the Drafts IDs before composition, then poll fresh reads after
-closing the compose window. Reconcile the save with one newly visible row
-that matches the intended draft. An ambiguous result or a timeout leaves
-the save uncertain. Mail scripting provides no direct link from a compose
-object to the persisted row, so an identical draft saved concurrently by
-another client can still be mistaken for the new draft.
+After saving and closing the compose window, poll the selected account's
+Drafts and match sender, To, Cc, Bcc, and subject. Return the metadata of
+the unique match. Report ambiguity or timeout as uncertain. Drafts with the
+same addresses and subject are indistinguishable during reconciliation.
 
 If a save may have succeeded but its result is uncertain, exit nonzero and
 identify the account and operation stage on stderr. The client can reconcile
@@ -124,8 +121,8 @@ Live probe results:
     new rows with identical content under serial testing. Mail provides no
     causal identity if a different client saves an identical draft during
     the same operation. Even a singleton match can be premature if the
-    intended draft becomes visible later. Proceed with serialized MailCLI
-    creates and document the limitation for external clients.
+    intended draft becomes visible later. The original experiment used an ID
+    snapshot, which was dropped in review under the unique-content assumption.
 -   Synthetic moves used the resolved Trash child. The IMAP source could
     remain visible immediately after the move and disappeared on reread.
     Verify both Drafts absence and Trash presence after bounded polling.
@@ -161,13 +158,11 @@ synthetic drafts were moved to Trash and verified.
 
 - [x] Add compose flags and validate the account, sender, and attachments.
       Reuse the existing compose conventions and surface attachment errors.
-- [x] Serialize creates per account. Snapshot Drafts before composition,
-      save and close, then poll and match the post-close delta. Return
-      persisted metadata on a unique match. Report ambiguity or timeout as
-      uncertain and invalidate affected message caches.
+- [x] Save and close, then poll for a unique draft matching the sender,
+      To, Cc, Bcc, and subject. Return persisted metadata on a unique match. Report ambiguity
+      or timeout as uncertain and invalidate affected message caches.
 - [x] Test body-only and complete drafts, attachment failures, uncertain
-      saves, duplicate content, account-level serialization, and nullable
-      RFC Message-ID.
+      saves, ambiguous matches, and nullable RFC Message-ID.
 - [x] Run tests and lint.
 
 Live iCloud checks verified a body-only draft and an attachment draft. The
@@ -232,8 +227,7 @@ the removed `messages drafts` invocation exits with an error.
 
 - [x] Document all four commands, migration to `draft list`, identity and
       error semantics, and the client-side create-then-delete workflow.
-      Explain that concurrent identical saves by another client can cause
-      misidentification.
+      Document that sender, To, Cc, Bcc, and subject must identify one draft.
 - [x] Set the CLI version to 4.0.0 and verify `mail-app-cli --version`.
 - [x] Move the completed plan to `docs/plans/completed/`. Retain the threaded
       reply backlog item.

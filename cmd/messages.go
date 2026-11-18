@@ -45,11 +45,15 @@ func sanitizeCacheKey(s string) string {
 	return b.String()
 }
 
-// invalidateMailboxCache removes all message-list cache entries for the given mailbox.
+// invalidateMailboxCache removes message-list entries for a mailbox. An empty
+// mailbox clears all message-list entries for the account.
 // Call this after any mutation so subsequent list commands see fresh data.
 func invalidateMailboxCache(account, mailbox string) {
 	if c, err := cache.New(); err == nil {
-		prefix := fmt.Sprintf("msgs-%s-%s-", sanitizeCacheKey(account), sanitizeCacheKey(mailbox))
+		prefix := fmt.Sprintf("msgs-%s-", sanitizeCacheKey(account))
+		if mailbox != "" {
+			prefix += sanitizeCacheKey(mailbox) + "-"
+		}
 		// Cache invalidation is best effort after a successful mutation.
 		_ = c.DeletePrefix(prefix)
 	}

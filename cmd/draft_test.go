@@ -188,9 +188,9 @@ func TestDraftDeleteFailuresLeaveStdoutEmpty(t *testing.T) {
 	}
 }
 
-func TestDraftCreateInvalidatesKnownMailboxOnUncertainty(t *testing.T) {
+func TestDraftCreateInvalidatesAccountCacheOnError(t *testing.T) {
 	account := "Work"
-	want := &mail.DraftSaveUncertainError{Account: account, Mailbox: "Account Drafts", Stage: "close failed"}
+	want := errors.New("close failed")
 	var invalidated []string
 	command := newDraftCreateCmd(stubDraftReader{create: func(string, mail.DraftOptions) (*mail.Message, error) {
 		return nil, want
@@ -204,8 +204,8 @@ func TestDraftCreateInvalidatesKnownMailboxOnUncertainty(t *testing.T) {
 	if err := command.Execute(); !errors.Is(err, want) {
 		t.Fatalf("create error = %v, want %v", err, want)
 	}
-	if strings.Join(invalidated, "/") != "Work/Account Drafts" {
-		t.Errorf("invalidated %v, want Work/Account Drafts", invalidated)
+	if strings.Join(invalidated, "/") != "Work/" {
+		t.Errorf("invalidated %v, want Work with all mailboxes", invalidated)
 	}
 	if output.Len() != 0 {
 		t.Errorf("stdout = %q, want empty", output.String())

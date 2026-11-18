@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -77,10 +76,7 @@ func newDraftCreateCmd(client draftClient, account *string, invalidate func(acco
 			}
 			draft, err := client.CreateDraft(*account, options)
 			if err != nil {
-				var uncertain *mail.DraftSaveUncertainError
-				if errors.As(err, &uncertain) && uncertain.Mailbox != "" {
-					invalidate(uncertain.Account, uncertain.Mailbox)
-				}
+				invalidate(*account, "")
 				return err
 			}
 			invalidate(*account, draft.Mailbox)

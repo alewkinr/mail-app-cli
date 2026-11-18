@@ -48,7 +48,7 @@ func runDraftReadFixture(t *testing.T, scenario string, readsDetail bool, args .
 	if readsDetail {
 		detailFlag = "true"
 	}
-	script := strings.Replace(readMessagesJXAScript, "Application('Mail')", "draftFixture("+string(fixtureArgs)+")", 1) +
+	script := strings.Replace(readDraftsJXAScript, "Application('Mail')", "draftFixture("+string(fixtureArgs)+")", 1) +
 		messageReadFixture + draftReadFixture + "\nconst fixtureReadsDetail = " + detailFlag + ";"
 	return NewClient().runJXA(script, args...)
 }

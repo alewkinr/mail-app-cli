@@ -7,7 +7,16 @@ var (
 	messageScopeJXAScript string
 
 	//go:embed scripts/read_messages.scpt
-	readMessagesJXAScript string
+	readMessagesSource string
+
+	//go:embed scripts/read_drafts.scpt
+	readDraftsSource string
+
+	//go:embed scripts/message_read_helpers.scpt
+	messageReadHelpers string
+
+	readMessagesJXAScript = messageReadHelpers + "\n" + readMessagesSource
+	readDraftsJXAScript   = messageReadHelpers + "\n" + readDraftsSource
 
 	//go:embed scripts/get_accounts.scpt
 	getAccountsAppleScript string

@@ -1113,7 +1113,7 @@ func (c *Client) BulkMoveMessages(requests []struct {
 // ListDrafts returns metadata for saved drafts in the named account, or all
 // configured accounts if account is empty.
 func (c *Client) ListDrafts(account string) ([]Message, error) {
-	output, err := c.runJXA(readMessagesJXAScript, "draft-list", account)
+	output, err := c.runJXA(readDraftsJXAScript, "draft-list", account)
 	if err != nil {
 		return nil, fmt.Errorf("list drafts: %w", err)
 	}
@@ -1129,7 +1129,7 @@ func (c *Client) ListDrafts(account string) ([]Message, error) {
 
 // ShowDraft returns details for a saved draft in the named account.
 func (c *Client) ShowDraft(account, localID string) (*MessageDetail, error) {
-	output, err := c.runJXA(readMessagesJXAScript, "draft-show", account, localID)
+	output, err := c.runJXA(readDraftsJXAScript, "draft-show", account, localID)
 	if err != nil {
 		return nil, fmt.Errorf("show draft: %w", err)
 	}

@@ -1,18 +1,16 @@
 package mail
 
 import (
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	netmail "net/mail"
 	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
-	"syscall"
+
 	"time"
 )
 
@@ -26,19 +24,20 @@ type DraftOptions struct {
 	Attachments []string
 }
 
-type draftSnapshot struct {
+type draftMailboxInfo struct {
 	AccountID string
 	Mailbox   string
 	Sender    string
-	IDs       []string
 }
 
 type savedDraft struct {
-	MessageDetail
-	Attachments []string
+	Message
+	ToRecipients  []string
+	CcRecipients  []string
+	BccRecipients []string
 }
 
-type draftObservation struct {
+type draftCandidates struct {
 	Drafts  []savedDraft
 	Pending bool
 }
@@ -48,18 +47,14 @@ func (c *Client) CreateDraft(account string, options DraftOptions) (*Message, er
 	if strings.TrimSpace(account) == "" {
 		return nil, fmt.Errorf("account is required")
 	}
-	if strings.ContainsRune(options.Body, '\uFFFC') {
-		return nil, fmt.Errorf("draft body cannot contain a Unicode object replacement character")
-	}
 	for _, recipients := range [][]string{options.To, options.Cc, options.Bcc} {
 		for _, recipient := range recipients {
-			if _, err := netmail.ParseAddress(recipient); err != nil {
+			if mailboxAddress(recipient) == "" {
 				return nil, fmt.Errorf("invalid draft recipient %q", recipient)
 			}
 		}
 	}
 	attachmentPaths := make([]string, 0, len(options.Attachments))
-	attachmentDigests := make(map[draftAttachment]int)
 	for _, path := range options.Attachments {
 		absolutePath, err := filepath.Abs(path)
 		if err != nil {
@@ -73,179 +68,87 @@ func (c *Client) CreateDraft(account string, options DraftOptions) (*Message, er
 			return nil, fmt.Errorf("draft attachment %q must be a regular file", path)
 		}
 		attachmentPaths = append(attachmentPaths, absolutePath)
-		digest, err := draftFileDigest(absolutePath)
-		if err != nil {
-			return nil, fmt.Errorf("hash draft attachment %q: %w", path, err)
-		}
-		attachmentDigests[draftAttachment{name: filepath.Base(path), digest: digest}]++
 	}
 	options.Attachments = attachmentPaths
 
-	// Resolve the stable account ID before locking, then take a fresh snapshot
-	// under the lock so another MailCLI process cannot race our baseline.
-	snapshot, err := c.takeDraftSnapshot(account)
+	scope, err := c.getDraftMailboxAndSender(account)
 	if err != nil {
 		return nil, err
 	}
-	cacheDir, err := os.UserCacheDir()
-	if err != nil {
-		return nil, fmt.Errorf("locate cache for draft creation: %w", err)
-	}
-	lock, err := lockDraftAccount(filepath.Join(cacheDir, "mail-app-cli", "draft-locks"), snapshot.AccountID)
-	if err != nil {
-		return nil, fmt.Errorf("lock draft creation for account %q: %w", account, err)
-	}
-	defer func() { _ = lock.Close() }()
 
-	baseline, err := c.takeDraftSnapshot(account)
-	if err != nil {
-		return nil, err
-	}
-	if baseline.AccountID != snapshot.AccountID {
-		return nil, fmt.Errorf("draft account %q changed before composition", account)
-	}
-
-	args := []string{baseline.Sender, options.Subject, options.Body}
+	args := []string{scope.Sender, options.Subject, options.Body}
 	for _, values := range [][]string{options.To, options.Cc, options.Bcc, options.Attachments} {
 		args = append(args, strconv.Itoa(len(values)))
 		args = append(args, values...)
 	}
 	output, err := c.runAppleScript(createDraftAppleScript, args...)
 	if err != nil {
-		return nil, uncertainDraftSave(account, baseline.Mailbox, "compose, save, or close failed")
+		return nil, fmt.Errorf("draft save for account %q is uncertain: %w", account, err)
 	}
 	if output != "saved and closed" {
-		switch output {
-		case "compose failed; composer discarded", "compose failed; composer cleanup unverified",
-			"attach failed; composer discarded", "attach failed; composer cleanup unverified", "save failed", "close failed":
-			return nil, uncertainDraftSave(account, baseline.Mailbox, output)
-		default:
-			return nil, uncertainDraftSave(account, baseline.Mailbox, "unexpected response from Mail.app")
-		}
+		return nil, fmt.Errorf("draft save for account %q is uncertain (%s); check draft list before retrying", account, output)
 	}
-	baselineIDs, err := json.Marshal(baseline.IDs)
-	if err != nil {
-		return nil, uncertainDraftSave(account, baseline.Mailbox, "encode saved-record baseline")
-	}
-	return reconcileDraft(account, baseline, options, func() (draftObservation, error) {
-		var observation draftObservation
-		output, err := c.runJXA(readMessagesJXAScript, "draft-observe", account, baseline.AccountID, baseline.Mailbox, string(baselineIDs))
+	return findSavedDraft(account, scope, options, func() (draftCandidates, error) {
+		var candidates draftCandidates
+		output, err := c.runJXA(readDraftsJXAScript, "draft-get-candidates", account, scope.AccountID, scope.Mailbox, options.Subject)
 		if err != nil {
-			return observation, err
+			return candidates, err
 		}
-		err = json.Unmarshal([]byte(output), &observation)
-		return observation, err
-	}, func(draft savedDraft) (bool, error) {
-		return c.verifyDraftAttachments(baseline.AccountID, draft, attachmentDigests, len(options.Attachments))
-	}, 10, 350*time.Millisecond)
+		err = json.Unmarshal([]byte(output), &candidates)
+		return candidates, err
+	}, 3, 350*time.Millisecond)
 }
 
-func (c *Client) takeDraftSnapshot(account string) (draftSnapshot, error) {
-	var snapshot draftSnapshot
-	output, err := c.runJXA(readMessagesJXAScript, "draft-snapshot", account)
+func (c *Client) getDraftMailboxAndSender(account string) (draftMailboxInfo, error) {
+	var scope draftMailboxInfo
+	output, err := c.runJXA(readDraftsJXAScript, "draft-mailbox-info", account)
 	if err != nil {
-		return snapshot, fmt.Errorf("snapshot drafts for account %q: %w", account, err)
+		return scope, fmt.Errorf("read Drafts for account %q: %w", account, err)
 	}
-	if err := json.Unmarshal([]byte(output), &snapshot); err != nil {
-		return snapshot, fmt.Errorf("decode draft snapshot for account %q: %w", account, err)
+	if err := json.Unmarshal([]byte(output), &scope); err != nil {
+		return scope, fmt.Errorf("decode Drafts scope for account %q: %w", account, err)
 	}
-	if snapshot.AccountID == "" || snapshot.Mailbox == "" {
-		return snapshot, fmt.Errorf("incomplete Mail.app draft scope for account %q", account)
+	if scope.AccountID == "" || scope.Mailbox == "" {
+		return scope, fmt.Errorf("incomplete Mail.app draft scope for account %q", account)
 	}
-	if _, err := netmail.ParseAddress(snapshot.Sender); err != nil {
-		return snapshot, fmt.Errorf("account %q has no valid Mail.app sender", account)
+	if mailboxAddress(scope.Sender) == "" {
+		return scope, fmt.Errorf("account %q has no valid Mail.app sender", account)
 	}
-	return snapshot, nil
+	return scope, nil
 }
 
-func lockDraftAccount(dir, accountID string) (*os.File, error) {
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return nil, err
-	}
-	name := fmt.Sprintf("%x.lock", sha256.Sum256([]byte(accountID)))
-	file, err := os.OpenFile(filepath.Join(dir, name), os.O_CREATE|os.O_RDWR, 0600)
-	if err != nil {
-		return nil, err
-	}
-	// Leave the lock file in place. Closing the descriptor releases the
-	// kernel lock, including when a CLI process exits unexpectedly.
-	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
-		_ = file.Close()
-		return nil, err
-	}
-	return file, nil
-}
-
-// DraftSaveUncertainError reports a draft that may have been saved in Mail.app.
-type DraftSaveUncertainError struct {
-	Account string
-	Mailbox string
-	Stage   string
-}
-
-func (e *DraftSaveUncertainError) Error() string {
-	return fmt.Sprintf("draft save for account %q is uncertain (%s); check draft list before retrying", e.Account, e.Stage)
-}
-
-func uncertainDraftSave(account, mailbox, stage string) error {
-	return &DraftSaveUncertainError{Account: account, Mailbox: mailbox, Stage: stage}
-}
-
-func reconcileDraft(account string, baseline draftSnapshot, options DraftOptions, observe func() (draftObservation, error), verifyAttachments func(savedDraft) (bool, error), attempts int, interval time.Duration) (*Message, error) {
-	var previousID string
+// findSavedDraft polls until Mail exposes one fully verified matching draft.
+func findSavedDraft(account string, scope draftMailboxInfo, options DraftOptions, getCandidates func() (draftCandidates, error), attempts int, interval time.Duration) (*Message, error) {
 	for attempt := 0; attempt < attempts; attempt++ {
 		if attempt > 0 {
 			time.Sleep(interval)
 		}
-		observation, err := observe()
+		candidates, err := getCandidates()
 		if err != nil {
-			previousID = ""
 			continue
 		}
 		var match *Message
-		for _, draft := range observation.Drafts {
-			if draft.ID == "" || draft.Account != account || draft.Mailbox != baseline.Mailbox || slices.Contains(baseline.IDs, draft.ID) {
+		for _, draft := range candidates.Drafts {
+			if draft.ID == "" || draft.Account != account || draft.Mailbox != scope.Mailbox {
 				continue
 			}
-			if !matchesDraft(draft, baseline.Sender, options) {
+			if !matchesDraftEnvelope(draft, scope.Sender, options) {
 				continue
-			}
-			if len(options.Attachments) != 0 {
-				verified, err := verifyAttachments(draft)
-				if err != nil {
-					observation.Pending = true
-					continue
-				}
-				if !verified {
-					continue
-				}
 			}
 			if match != nil {
-				return nil, uncertainDraftSave(account, baseline.Mailbox, "multiple matching saved records")
+				return nil, fmt.Errorf("draft save for account %q is uncertain: multiple matching drafts; check draft list before retrying", account)
 			}
 			match = &draft.Message
 		}
-		if match == nil || observation.Pending {
-			previousID = ""
-			continue
-		}
-		if match.ID == previousID {
+		if match != nil && !candidates.Pending {
 			return match, nil
 		}
-		previousID = match.ID
 	}
-	return nil, uncertainDraftSave(account, baseline.Mailbox, "timed out identifying the saved record")
+	return nil, fmt.Errorf("draft save for account %q is uncertain: no unique saved draft confirmed; check draft list before retrying", account)
 }
 
-func matchesDraft(draft savedDraft, sender string, options DraftOptions) bool {
-	if draft.Subject != options.Subject || addressKey(draft.Sender) != addressKey(sender) {
-		return false
-	}
-	body := strings.ReplaceAll(strings.ReplaceAll(draft.Content, "\r\n", "\n"), "\r", "\n")
-	expectedBody := strings.ReplaceAll(strings.ReplaceAll(options.Body, "\r\n", "\n"), "\r", "\n")
-	// Mail may pad the body with whitespace and attachment placeholders on save.
-	body = strings.ReplaceAll(body, "\uFFFC", "")
-	if strings.TrimSpace(body) != strings.TrimSpace(expectedBody) {
+func matchesDraftEnvelope(draft savedDraft, sender string, options DraftOptions) bool {
+	if draft.Subject != options.Subject || mailboxAddress(draft.Sender) != mailboxAddress(sender) {
 		return false
 	}
 	for _, group := range []struct{ got, want []string }{
@@ -256,7 +159,7 @@ func matchesDraft(draft savedDraft, sender string, options DraftOptions) bool {
 		normalize := func(addresses []string) []string {
 			keys := make([]string, 0, len(addresses))
 			for _, address := range addresses {
-				keys = append(keys, addressKey(address))
+				keys = append(keys, mailboxAddress(address))
 			}
 			slices.Sort(keys)
 			return keys
@@ -265,21 +168,15 @@ func matchesDraft(draft savedDraft, sender string, options DraftOptions) bool {
 			return false
 		}
 	}
-	wantNames := make([]string, 0, len(options.Attachments))
-	for _, path := range options.Attachments {
-		wantNames = append(wantNames, filepath.Base(path))
-	}
-	gotNames := slices.Clone(draft.Attachments)
-	slices.Sort(wantNames)
-	slices.Sort(gotNames)
-	return slices.Equal(gotNames, wantNames)
+	return true
 }
 
-func addressKey(value string) string {
+// mailboxAddress strips a display name from a formatted Mail.app address.
+func mailboxAddress(value string) string {
 	if address, err := netmail.ParseAddress(value); err == nil {
 		return strings.ToLower(address.Address)
 	}
-	return strings.ToLower(strings.TrimSpace(value))
+	return ""
 }
 
 // DraftMove identifies the saved draft and its source and destination mailboxes.
@@ -292,10 +189,6 @@ type DraftMove struct {
 
 // DeleteDraft moves a saved draft to Trash within the selected account.
 func (c *Client) DeleteDraft(account, localID string) (DraftMove, error) {
-	return deleteDraft(c.runJXA, account, localID)
-}
-
-func deleteDraft(run jxaRunFunc, account, localID string) (DraftMove, error) {
 	if strings.TrimSpace(account) == "" {
 		return DraftMove{}, fmt.Errorf("account is required")
 	}
@@ -303,15 +196,18 @@ func deleteDraft(run jxaRunFunc, account, localID string) (DraftMove, error) {
 		return DraftMove{}, fmt.Errorf("draft ID must be nonempty")
 	}
 
+	output, err := c.runJXA(deleteDraftJXAScript, account, localID)
+	return draftMoveResult(account, localID, output, err)
+}
+
+func draftMoveResult(account, localID, output string, err error) (DraftMove, error) {
 	uncertain := func(stage string) error {
 		return fmt.Errorf("trash move for draft %q in account %q is uncertain (%s); check draft list and Trash before retrying", localID, account, stage)
 	}
-	output, err := run(deleteDraftJXAScript, account, localID)
 	if err != nil {
-		for _, scopeError := range []error{ErrAccountNotFound, ErrAccountAmbiguous, ErrMailboxNotFound, ErrMailboxAmbiguous} {
-			if errors.Is(err, scopeError) {
-				return DraftMove{}, err
-			}
+		if errors.Is(err, ErrAccountNotFound) || errors.Is(err, ErrAccountAmbiguous) ||
+			errors.Is(err, ErrMailboxNotFound) || errors.Is(err, ErrMailboxAmbiguous) {
+			return DraftMove{}, err
 		}
 		return DraftMove{}, fmt.Errorf("%w: %w", uncertain("Mail.app script failed"), err)
 	}
@@ -342,60 +238,4 @@ func deleteDraft(run jxaRunFunc, account, localID string) (DraftMove, error) {
 	default:
 		return move, uncertain("unexpected Mail.app response")
 	}
-}
-
-type draftAttachment struct {
-	name   string
-	digest [sha256.Size]byte
-}
-
-func draftFileDigest(path string) ([sha256.Size]byte, error) {
-	var digest [sha256.Size]byte
-	file, err := os.Open(path)
-	if err != nil {
-		return digest, err
-	}
-	defer func() { _ = file.Close() }()
-	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
-		return digest, err
-	}
-	copy(digest[:], hash.Sum(nil))
-	return digest, nil
-}
-
-func (c *Client) verifyDraftAttachments(accountID string, draft savedDraft, expected map[draftAttachment]int, count int) (bool, error) {
-	dir, err := os.MkdirTemp("", "mailcli-draft-verify-")
-	if err != nil {
-		return false, err
-	}
-	defer func() { _ = os.RemoveAll(dir) }()
-	output, err := c.runJXA(readMessagesJXAScript, "draft-export-attachments", draft.Account, accountID, draft.Mailbox, draft.ID, dir, strconv.Itoa(count))
-	if err != nil {
-		return false, err
-	}
-	var names []string
-	if err := json.Unmarshal([]byte(output), &names); err != nil {
-		return false, err
-	}
-	return checkDraftAttachmentDigests(dir, names, expected, count)
-}
-
-func checkDraftAttachmentDigests(dir string, names []string, expected map[draftAttachment]int, count int) (bool, error) {
-	if len(names) != count {
-		return false, nil
-	}
-	observed := make(map[draftAttachment]int)
-	for i, name := range names {
-		digest, err := draftFileDigest(filepath.Join(dir, strconv.Itoa(i)))
-		if err != nil {
-			return false, err
-		}
-		attachment := draftAttachment{name: name, digest: digest}
-		observed[attachment]++
-		if observed[attachment] > expected[attachment] {
-			return false, nil
-		}
-	}
-	return true, nil
 }

@@ -269,7 +269,8 @@ mail-app-cli draft delete 123 --account "iCloud"
 -   `draft show` returns a single message detail object with the body and
     recipients. Use the saved draft's local `id` and its Mail.app account name.
 -   `draft create` saves and closes an unsent draft. You can omit both the
-    subject and recipients. `--to`, `--cc`, `--bcc`, and `--attach` are
+    subject and recipients. MailCLI saves the supplied body as-is, with
+    no automatic Mail signature. `--to`, `--cc`, `--bcc`, and `--attach` are
     repeatable. The JSON result describes the saved draft, with its local
     `id`, `account`, and `mailbox`. The `rfcMessageID` field can be `null`.
 -   `draft delete` moves the saved draft to the selected account's Trash and
@@ -281,10 +282,10 @@ one using its local ID. If MailCLI cannot verify a save or Trash move, the
 command exits with an error and no JSON on stdout. Check `draft list` and, for
 a move, the account's Trash before retrying.
 
-MailCLI serializes its own draft creates per account and identifies the saved
-record after closing it. An identical draft saved concurrently by another
-client can make that result ambiguous or cause MailCLI to identify the other
-client's draft.
+After closing the compose window, MailCLI matches the saved draft by sender,
+To, Cc, and Bcc address lists, and subject in the selected account.
+These values must identify one draft. Two drafts with the same values
+are indistinguishable even when their bodies or attachments differ.
 
 ### Sending Email
 

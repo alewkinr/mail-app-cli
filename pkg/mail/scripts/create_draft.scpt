@@ -15,7 +15,9 @@ on run argv
 		with timeout of 15 seconds
 			set draftMessage to missing value
 			try
-				set draftMessage to make new outgoing message with properties {sender:senderAddress, subject:messageSubject, content:messageBody, visible:true}
+				set draftMessage to make new outgoing message with properties {sender:senderAddress, subject:messageSubject, visible:true}
+				set message signature of draftMessage to missing value
+				set content of draftMessage to messageBody
 				repeat with recipientAddress in toAddresses
 					make new to recipient at end of to recipients of draftMessage with properties {address:(contents of recipientAddress)}
 				end repeat
