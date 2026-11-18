@@ -14,6 +14,8 @@ function run(argv) {
 		return encodeMessageRead(snapshotDrafts(mail, args[0]));
 	case 'draft-observe':
 		return encodeMessageRead(observeDrafts(mail, args));
+	case 'draft-export-attachments':
+		return encodeMessageRead(exportDraftAttachments(mail, args));
 	case 'draft-show':
 		return encodeMessageRead(showDraft(mail, args[0], args[1]));
 	case 'show':
@@ -374,4 +376,30 @@ function observeDrafts(mail, args) {
 		}
 	}
 	return {drafts, pending};
+}
+
+function exportDraftAttachments(mail, args) {
+	const [accountName, accountID, mailboxName, localID, directory, count] = args;
+	const accountScope = resolveAccount(mail, accountName);
+	if (accountScope.error) return accountScope.error;
+	if (String(accountScope.account.id()) !== accountID) throw new Error('draft account changed');
+	const scope = resolveSpecialMailbox(mail.draftsMailbox().mailboxes(), accountScope.account, 'Drafts');
+	if (scope.error) return scope.error;
+	if (scope.mailbox.name() !== mailboxName) throw new Error('draft mailbox changed');
+
+	const message = scope.mailbox.messages.byId(Number(localID));
+	if (String(message.id()) !== localID || message.deletedStatus() || String(message.mailbox().account().id()) !== accountID) {
+		throw new Error('draft changed before attachment verification');
+	}
+	const attachments = message.mailAttachments();
+	if (attachments.length !== Number(count)) return [];
+	const names = attachments.map((attachment, index) => {
+		const name = attachment.name();
+		attachment.save({in: Path(directory + '/' + index)});
+		return name;
+	});
+	if (String(message.id()) !== localID || message.deletedStatus() || String(message.mailbox().account().id()) !== accountID) {
+		throw new Error('draft changed during attachment verification');
+	}
+	return names;
 }

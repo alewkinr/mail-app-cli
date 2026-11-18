@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -59,12 +60,12 @@ func newDraftCmd(client draftClient) *cobra.Command {
 			return encoder.Encode(draft)
 		},
 	})
-	drafts.AddCommand(newDraftCreateCmd(client, &account))
+	drafts.AddCommand(newDraftCreateCmd(client, &account, invalidateMailboxCache))
 	drafts.AddCommand(newDraftDeleteCmd(client, &account))
 	return drafts
 }
 
-func newDraftCreateCmd(client draftClient, account *string) *cobra.Command {
+func newDraftCreateCmd(client draftClient, account *string, invalidate func(account, mailbox string)) *cobra.Command {
 	var options mail.DraftOptions
 	command := &cobra.Command{
 		Use:   "create",
@@ -76,9 +77,13 @@ func newDraftCreateCmd(client draftClient, account *string) *cobra.Command {
 			}
 			draft, err := client.CreateDraft(*account, options)
 			if err != nil {
+				var uncertain *mail.DraftSaveUncertainError
+				if errors.As(err, &uncertain) && uncertain.Mailbox != "" {
+					invalidate(uncertain.Account, uncertain.Mailbox)
+				}
 				return err
 			}
-			invalidateMailboxCache(*account, draft.Mailbox)
+			invalidate(*account, draft.Mailbox)
 			encoder := json.NewEncoder(cmd.OutOrStdout())
 			encoder.SetIndent("", "  ")
 			return encoder.Encode(draft)

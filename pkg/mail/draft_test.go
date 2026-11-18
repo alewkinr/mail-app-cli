@@ -3,6 +3,8 @@ package mail
 import (
 	"errors"
 	"os"
+	"path/filepath"
+
 	"runtime"
 	"slices"
 	"strconv"
@@ -55,7 +57,7 @@ func TestReconcileDraft(t *testing.T) {
 				observation := test.observations[index]
 				index++
 				return observation, nil
-			}, len(test.observations), 0)
+			}, nil, len(test.observations), 0)
 			if test.wantError != "" {
 				if err == nil || !strings.Contains(err.Error(), "uncertain") || !strings.Contains(err.Error(), test.wantError) || draft != nil {
 					t.Errorf("got draft %+v, error %v, want uncertain %q", draft, err, test.wantError)
@@ -174,7 +176,7 @@ function fixtureMail() {
 		accounts: () => [work, personal],
 		draftsMailbox: () => ({mailboxes: () => [source, personalDrafts]}),
 		trashMailbox: () => ({mailboxes: () => fixtureCase === 'missing Trash' ? [] :
-			fixtureCase === 'ambiguous Trash' ? [destination, {...destination}] : [destination]})
+			fixtureCase === 'ambiguous Trash' ? [destination, {...destination}] : [destination, {name: () => "Trash", account: () => personal}]})
 	};
 }
 `
@@ -185,7 +187,7 @@ function fixtureMail() {
 	}{
 		{name: "verified", account: "Work", id: "42"},
 		{name: "nullable RFC ID", account: "Work", id: "42"},
-		{name: "wrong account", account: "Personal", id: "42", want: ErrMailboxNotFound},
+		{name: "wrong account", account: "Personal", id: "42", want: ErrMessageNotFound},
 		{name: "non-draft ID", account: "Work", id: "99", want: ErrMessageNotFound},
 		{name: "non-draft reference", account: "Work", id: "42", want: ErrMessageNotFound},
 		{name: "missing Trash", account: "Work", id: "42", want: ErrMailboxNotFound},
@@ -218,5 +220,36 @@ function fixtureMail() {
 				}
 			}
 		})
+	}
+}
+
+func TestCheckDraftAttachmentDigests(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "0")
+	if err := os.WriteFile(path, []byte("original"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	digest, err := draftFileDigest(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := map[draftAttachment]int{{name: "same.txt", digest: digest}: 1}
+	names := []string{"same.txt"}
+
+	if match, err := checkDraftAttachmentDigests(dir, names, expected, 1); err != nil || !match {
+		t.Fatalf("matching file: got %v, %v", match, err)
+	}
+	if err := os.WriteFile(path, []byte("switched"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if match, err := checkDraftAttachmentDigests(dir, names, expected, 1); err != nil || match {
+		t.Errorf("same name and size with different bytes: got %v, %v", match, err)
+	}
+}
+
+func TestCreateDraftRejectsObjectReplacementCharacter(t *testing.T) {
+	draft, err := NewClient().CreateDraft("Work", DraftOptions{Body: "body \uFFFC"})
+	if err == nil || !strings.Contains(err.Error(), "Unicode object replacement character") || draft != nil {
+		t.Errorf("got draft %+v, error %v, want explicit body rejection", draft, err)
 	}
 }
