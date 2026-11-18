@@ -8,6 +8,10 @@ function run(argv) {
 		return encodeMessageRead(searchMessages(mail, args));
 	case 'special':
 		return JSON.stringify(specialMailboxMessages(mail, args));
+	case 'draft-list':
+		return encodeMessageRead(listDrafts(mail, args[0]));
+	case 'draft-show':
+		return encodeMessageRead(showDraft(mail, args[0], args[1]));
 	case 'show':
 		return encodeMessageRead(showMessages(mail, args));
 	default:
@@ -157,9 +161,6 @@ function specialMailboxMessages(mail, args) {
 	case 'sent':
 		mailboxes = mail.sentMailboxes();
 		break;
-	case 'drafts':
-		mailboxes = mail.draftMailboxes();
-		break;
 	case 'trash':
 		mailboxes = mail.trashMailboxes();
 		break;
@@ -220,7 +221,10 @@ function showMessages(mail, args) {
 	const [accountName, mailboxName, selector, ...ids] = args;
 	const scope = resolveMessageScope(mail, accountName, mailboxName);
 	if (scope.error) return scope.error;
-	const mailbox = scope.mailbox;
+	return readMessageDetails(scope.mailbox, accountName, mailboxName, selector, ids);
+}
+
+function readMessageDetails(mailbox, accountName, mailboxName, selector, ids, savedDraftOnly) {
 	const byRFCID = selector === 'rfc';
 	const keys = byRFCID ? ids.map(normalizeRFCMessageID) : ids;
 	const matches = new Map(keys.map(key => [key, []]));
@@ -266,6 +270,8 @@ function showMessages(mail, args) {
 	messages.forEach((message, index) => {
 		if (String(message.id()) !== selected[index].localID) {
 			issues.push({id: ids[index], reason: 'mailbox changed during lookup'});
+		} else if (savedDraftOnly && message.deletedStatus()) {
+			issues.push({id: ids[index], reason: 'missing'});
 		}
 	});
 	if (issues.length > 0) {
@@ -281,4 +287,40 @@ function showMessages(mail, args) {
 		return detail;
 	});
 	return issues.length > 0 ? {issues: issues} : {messages: details};
+}
+
+function listDrafts(mail, accountName) {
+	let accounts;
+	if (accountName) {
+		const scope = resolveAccount(mail, accountName);
+		if (scope.error) return scope.error;
+		accounts = [scope.account];
+	} else {
+		accounts = mail.accounts();
+	}
+	if (accounts.length === 0) return [];
+
+	const children = mail.draftsMailbox().mailboxes();
+	const names = new Set();
+	const result = [];
+	for (const account of accounts) {
+		const name = account.name();
+		if (names.has(name)) return scopeFailure('account_ambiguous', name);
+		names.add(name);
+		const scope = resolveSpecialMailbox(children, account, 'Drafts');
+		if (scope.error) return scope.error;
+		const mailboxName = scope.mailbox.name();
+		for (const message of scope.mailbox.messages()) {
+			if (!message.deletedStatus()) result.push(messageMetadata(message, name, mailboxName));
+		}
+	}
+	return result;
+}
+
+function showDraft(mail, accountName, localID) {
+	const accountScope = resolveAccount(mail, accountName);
+	if (accountScope.error) return accountScope.error;
+	const scope = resolveSpecialMailbox(mail.draftsMailbox().mailboxes(), accountScope.account, 'Drafts');
+	if (scope.error) return scope.error;
+	return readMessageDetails(scope.mailbox, accountName, scope.mailbox.name(), 'local', [localID], true);
 }

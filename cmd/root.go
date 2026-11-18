@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/intelligrit/mail-app-cli/pkg/mail"
+
 	"github.com/spf13/cobra"
 )
 
@@ -26,6 +28,7 @@ func init() {
 	rootCmd.AddCommand(accountsCmd)
 	rootCmd.AddCommand(mailboxesCmd)
 	rootCmd.AddCommand(messagesCmd)
+	rootCmd.AddCommand(newDraftCmd(mail.NewClient()))
 	rootCmd.AddCommand(sendCmd)
 	rootCmd.AddCommand(attachmentsCmd)
 	rootCmd.AddCommand(searchCmd)

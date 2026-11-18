@@ -9,6 +9,7 @@ var (
 	ErrAccountNotFound  = errors.New("mail account not found")
 	ErrAccountAmbiguous = errors.New("mail account name is ambiguous")
 	ErrMailboxNotFound  = errors.New("mailbox not found")
+	ErrMailboxAmbiguous = errors.New("mailbox is ambiguous")
 	ErrMessageNotFound  = errors.New("message not found")
 	ErrMessageIDMissing = errors.New("message is missing its RFC Message-ID")
 )

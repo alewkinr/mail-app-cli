@@ -27,3 +27,20 @@ function resolveMessageScope(mail, accountName, mailboxName) {
 	if (scope.error) return scope;
 	return resolveMailbox(scope.account, accountName, mailboxName);
 }
+
+// The aggregate mailbox contains the actual mailbox for each configured account.
+function resolveSpecialMailbox(children, account, mailboxName) {
+	const accountID = String(account.id());
+	const accountName = account.name();
+	const matches = children.filter(mailbox => {
+		const owner = mailbox.account();
+		return owner && String(owner.id()) === accountID;
+	});
+	if (matches.length === 0) {
+		return {error: scopeFailure('mailbox_not_found', accountName, mailboxName)};
+	}
+	if (matches.length > 1) {
+		return {error: scopeFailure('mailbox_ambiguous', accountName, mailboxName)};
+	}
+	return {mailbox: matches[0]};
+}

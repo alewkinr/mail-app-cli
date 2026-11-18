@@ -64,6 +64,8 @@ func (c *Client) runJXA(script string, args ...string) (string, error) {
 			return "", fmt.Errorf("%w: %q", ErrAccountAmbiguous, scope.Account)
 		case "mailbox_not_found":
 			return "", fmt.Errorf("%w: %q in account %q", ErrMailboxNotFound, scope.Mailbox, scope.Account)
+		case "mailbox_ambiguous":
+			return "", fmt.Errorf("%w: %q in account %q", ErrMailboxAmbiguous, scope.Mailbox, scope.Account)
 		default:
 			return "", fmt.Errorf("unknown Mail.app scope error: %q", scope.Code)
 		}
@@ -944,7 +946,7 @@ func (c *Client) BulkArchiveMessages(requests []struct {
 
 // GetUnifiedMessagesJSON retrieves messages from unified views across all accounts.
 //
-// mailboxType must be one of: "inbox", "unread", "flagged", "sent", "drafts",
+// mailboxType must be one of: "inbox", "unread", "flagged", "sent",
 // "trash", "junk".
 //
 // inbox/unread/flagged use the accounts-based path (GetMessagesFromMultipleMailboxes
@@ -952,13 +954,13 @@ func (c *Client) BulkArchiveMessages(requests []struct {
 // mail.inboxes() don't support the same bulk property operations as those
 // obtained via acc.mailboxes.byName(), causing unreliable filtering.
 //
-// sent/drafts/trash/junk use Mail.app's JXA special-mailbox accessors
+// sent/trash/junk use Mail.app's JXA special-mailbox accessors
 // (mail.sentMailboxes() etc.) which don't require per-message filtering.
 func (c *Client) GetUnifiedMessagesJSON(mailboxType string, limit, offset int) ([]Message, error) {
 	switch mailboxType {
 	case "inbox", "unread", "flagged":
 		return c.getInboxBasedUnified(mailboxType, limit, offset)
-	case "sent", "drafts", "trash", "junk":
+	case "sent", "trash", "junk":
 		return c.getSpecialMailboxUnified(mailboxType, limit, offset)
 	default:
 		return nil, fmt.Errorf("unknown unified mailbox type: %s", mailboxType)
@@ -1017,7 +1019,7 @@ func (c *Client) getInboxBasedUnified(mailboxType string, limit, offset int) ([]
 }
 
 // getSpecialMailboxUnified fetches messages from Mail.app's built-in special
-// mailbox collections (sentMailboxes, draftMailboxes, trashMailboxes,
+// mailbox collections (sentMailboxes, trashMailboxes,
 // junkMailboxes) via a single JXA call.  No per-message filtering is applied
 // since these views don't need unread/flagged filtering.
 func (c *Client) getSpecialMailboxUnified(mailboxType string, limit, offset int) ([]Message, error) {
@@ -1106,4 +1108,34 @@ func (c *Client) BulkMoveMessages(requests []struct {
 	}
 
 	return nil
+}
+
+// ListDrafts returns metadata for saved drafts in the named account, or all
+// configured accounts if account is empty.
+func (c *Client) ListDrafts(account string) ([]Message, error) {
+	output, err := c.runJXA(readMessagesJXAScript, "draft-list", account)
+	if err != nil {
+		return nil, fmt.Errorf("list drafts: %w", err)
+	}
+	var messages []Message
+	if err := json.Unmarshal([]byte(output), &messages); err != nil {
+		return nil, fmt.Errorf("decode drafts: %w", err)
+	}
+	if messages == nil {
+		messages = []Message{}
+	}
+	return sortAndSlice(messages, 0, 0), nil
+}
+
+// ShowDraft returns details for a saved draft in the named account.
+func (c *Client) ShowDraft(account, localID string) (*MessageDetail, error) {
+	output, err := c.runJXA(readMessagesJXAScript, "draft-show", account, localID)
+	if err != nil {
+		return nil, fmt.Errorf("show draft: %w", err)
+	}
+	messages, err := decodeMessageDetailsBatch(output, account, "Drafts", 1)
+	if err != nil {
+		return nil, err
+	}
+	return &messages[0], nil
 }

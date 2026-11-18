@@ -135,16 +135,20 @@ Live probe results:
 **Files**
 
 - Create `cmd/draft.go` and `cmd/draft_test.go`.
-- Modify `cmd/messages.go`, `pkg/mail/client.go`, and
-  `pkg/mail/scripts/read_messages.scpt`.
-- Update `pkg/mail/message_read_test.go` and add draft bridge tests as needed.
+- Modify `cmd/root.go`, `cmd/messages.go`, `pkg/mail/client.go`,
+  `pkg/mail/errors.go`, and the shared message scope and reader scripts.
+- Create `pkg/mail/draft_read_test.go`.
 
-- [ ] Add the `draft` group and wire `list` and `show` through the verified
+- [x] Add the `draft` group and wire `list` and `show` through the verified
       Drafts resolver and shared JXA message reader.
-- [ ] Remove `messages drafts` and retire the failed unified Drafts path.
-- [ ] Test all-account and scoped metadata, empty folders, detail output, and
+- [x] Remove `messages drafts` and retire the failed unified Drafts path.
+- [x] Test all-account and scoped metadata, empty folders, detail output, and
       missing or ambiguous scope and IDs.
-- [ ] Run tests and lint.
+- [x] Run tests and lint.
+
+Live checks confirmed that all-account listing succeeds and that scoped list
+and show return the expected row and body for a synthetic iCloud draft. The
+synthetic drafts were moved to Trash and verified.
 
 ### Task 3: Save and verify a standalone draft
 

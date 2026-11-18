@@ -397,12 +397,6 @@ var messagesSentCmd = newUnifiedCmd(
 	"sent",
 )
 
-var messagesDraftsCmd = newUnifiedCmd(
-	"drafts",
-	"List draft messages across all accounts",
-	"drafts",
-)
-
 var messagesFlaggedCmd = newUnifiedCmd(
 	"flagged",
 	"List flagged messages across all accounts",
@@ -433,7 +427,6 @@ func init() {
 	messagesCmd.AddCommand(messagesInboxCmd)
 	messagesCmd.AddCommand(messagesUnreadCmd)
 	messagesCmd.AddCommand(messagesSentCmd)
-	messagesCmd.AddCommand(messagesDraftsCmd)
 	messagesCmd.AddCommand(messagesFlaggedCmd)
 	messagesCmd.AddCommand(messagesTrashCmd)
 	messagesCmd.AddCommand(messagesJunkCmd)
@@ -460,7 +453,7 @@ func init() {
 	// Unified view flags (shared across all unified subcommands)
 	for _, cmd := range []*cobra.Command{
 		messagesInboxCmd, messagesUnreadCmd, messagesSentCmd,
-		messagesDraftsCmd, messagesFlaggedCmd, messagesTrashCmd, messagesJunkCmd,
+		messagesFlaggedCmd, messagesTrashCmd, messagesJunkCmd,
 	} {
 		cmd.Flags().IntVarP(&msgLimit, "limit", "l", 25, "Maximum number of messages to return")
 		cmd.Flags().IntVarP(&msgOffset, "offset", "o", 0, "Number of messages to skip (pagination)")
