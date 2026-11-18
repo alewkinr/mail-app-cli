@@ -204,7 +204,7 @@ prints JSON with the original draft ID, account, and both mailbox names.
 - Update this plan, `cmd/messages.go`, `cmd/draft_test.go`, and
   `pkg/mail/scripts/create_draft.scpt`.
 
-- [ ] Run `go test ./...` and `make lint`.
+- [x] Run `go test ./...` and `make lint`.
 - [x] On macOS, create and show a body-only draft and an attachment draft.
       Verify saved identities, account placement, nullable RFC ID handling,
       and attachment contents. Move the exact test drafts to Trash and
@@ -230,12 +230,12 @@ the removed `messages drafts` invocation exits with an error.
 - Modify `cmd/root.go`, `README.md`, and this plan.
 - Close `docs/backlog/create-mail-drafts.md` when the feature lands.
 
-- [ ] Document all four commands, migration to `draft list`, identity and
+- [x] Document all four commands, migration to `draft list`, identity and
       error semantics, and the client-side create-then-delete workflow.
       Explain that concurrent identical saves by another client can cause
       misidentification.
-- [ ] Set the CLI version to 4.0.0 and verify `mail-app-cli --version`.
-- [ ] Move the completed plan to `docs/plans/completed/`. Retain the threaded
+- [x] Set the CLI version to 4.0.0 and verify `mail-app-cli --version`.
+- [x] Move the completed plan to `docs/plans/completed/`. Retain the threaded
       reply backlog item.
 
 ## Post-Completion

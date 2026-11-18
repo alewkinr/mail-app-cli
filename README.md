@@ -14,6 +14,7 @@ A command-line interface for controlling macOS Mail.app. Provides complete scrip
 - Browse and manage mailboxes
 - List, read, search, and manage messages
 - Archive, move, delete, flag, and mark messages
+- Create, read, and move standalone drafts to Trash
 - Send emails
 - Manage attachments
 - Fully scriptable - perfect for automation and building GUIs
@@ -246,6 +247,44 @@ Delete a message:
 ```bash
 mail-app-cli messages delete <message-id> -a "Gmail" -m "INBOX"
 ```
+
+### Drafts
+
+MailCLI 4 removes `messages drafts`. Use `draft list` in scripts and at the
+command line.
+
+```bash
+mail-app-cli draft list
+mail-app-cli draft list --account "iCloud"
+mail-app-cli draft show 123 --account "iCloud"
+mail-app-cli draft create --account "iCloud" --body "Notes for later"
+mail-app-cli draft create --account "iCloud" --to reader@example.com \
+  --subject "Meeting notes" --body "For review" --attach ./notes.pdf
+mail-app-cli draft delete 123 --account "iCloud"
+```
+
+-   `draft list` returns a JSON array of message metadata, newest first.
+    Omit `--account` to list across configured accounts successfully, including
+    an empty array when there are no drafts.
+-   `draft show` returns a single message detail object with the body and
+    recipients. Use the saved draft's local `id` and its Mail.app account name.
+-   `draft create` saves and closes an unsent draft. You can omit both the
+    subject and recipients. `--to`, `--cc`, `--bcc`, and `--attach` are
+    repeatable. The JSON result describes the saved draft, with its local
+    `id`, `account`, and `mailbox`. The `rfcMessageID` field can be `null`.
+-   `draft delete` moves the saved draft to the selected account's Trash and
+    verifies the move. Its JSON receipt includes `account`, `draftId`,
+    `draftMailbox`, and `trashMailbox`.
+
+To replace a draft, create and verify the new one first, then delete the old
+one using its local ID. If MailCLI cannot verify a save or Trash move, the
+command exits with an error and no JSON on stdout. Check `draft list` and, for
+a move, the account's Trash before retrying.
+
+MailCLI serializes its own draft creates per account and identifies the saved
+record after closing it. An identical draft saved concurrently by another
+client can make that result ambiguous or cause MailCLI to identify the other
+client's draft.
 
 ### Sending Email
 
