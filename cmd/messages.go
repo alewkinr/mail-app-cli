@@ -59,6 +59,10 @@ var messagesCmd = &cobra.Command{
 	Use:   "messages",
 	Short: "Manage Mail.app messages",
 	Long:  `View and manage email messages in Mail.app.`,
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		return cmd.Help()
+	},
 }
 
 var messagesListCmd = &cobra.Command{

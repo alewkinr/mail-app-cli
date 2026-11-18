@@ -42,6 +42,8 @@ on run argv
 				return "save failed"
 			end try
 			try
+				-- Mail can return from save before the new draft is persisted.
+				delay 1
 				close draftMessage
 			on error
 				return "close failed"

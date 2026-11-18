@@ -104,6 +104,12 @@ func TestDraftShowFailuresLeaveStdoutEmpty(t *testing.T) {
 }
 
 func TestMessagesDraftsCommandRemoved(t *testing.T) {
+	if !messagesCmd.Runnable() {
+		t.Fatal("messages must validate arguments before falling back to help")
+	}
+	if err := messagesCmd.ValidateArgs([]string{"drafts"}); err == nil {
+		t.Fatal("legacy messages drafts invocation is accepted")
+	}
 	for _, command := range messagesCmd.Commands() {
 		if command.Name() == "drafts" || command.HasAlias("drafts") {
 			t.Fatal("legacy messages drafts command is still registered")

@@ -201,14 +201,27 @@ prints JSON with the original draft ID, account, and both mailbox names.
 
 **Files**
 
-- Update this plan with results and the relevant tests if gaps are found.
+- Update this plan, `cmd/messages.go`, `cmd/draft_test.go`, and
+  `pkg/mail/scripts/create_draft.scpt`.
 
 - [ ] Run `go test ./...` and `make lint`.
-- [ ] On macOS, create and show a body-only draft and an attachment draft.
+- [x] On macOS, create and show a body-only draft and an attachment draft.
       Verify saved identities, account placement, nullable RFC ID handling,
       and attachment contents. Move the exact test drafts to Trash and
       verify they no longer appear in Drafts.
-- [ ] Verify `draft list` and the absence of `messages drafts`.
+- [x] Verify `draft list` and the absence of `messages drafts`.
+
+Live iCloud and IMAP checks verified body-only and attachment drafts.
+Create and show agreed on IDs and account. All four saved records had RFC
+IDs. Automated tests covered null RFC IDs. Exported attachments matched
+the originals byte-for-byte. Global and scoped list included the new rows.
+Each delete returned a verified move receipt, and fresh list and show
+confirmed absence from Drafts. No test draft was sent.
+
+Mail could close the compose window before an asynchronous save persisted
+a body-only draft. Allow one second after `save` before closing and still
+require post-close verification. Reject unknown `messages` subcommands so
+the removed `messages drafts` invocation exits with an error.
 
 ### Task 6: Bump the major version and document migration
 
