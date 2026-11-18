@@ -3,16 +3,20 @@ function run(argv) {
 	const mail = Application('Mail');
 	switch (mode) {
 	case 'list':
-		return JSON.stringify(listMessages(mail, args));
+		return encodeMessageRead(listMessages(mail, args));
 	case 'search':
-		return JSON.stringify(searchMessages(mail, args));
+		return encodeMessageRead(searchMessages(mail, args));
 	case 'special':
 		return JSON.stringify(specialMailboxMessages(mail, args));
 	case 'show':
-		return JSON.stringify(showMessages(mail, args));
+		return encodeMessageRead(showMessages(mail, args));
 	default:
 		throw new Error('Unknown message read mode: ' + mode);
 	}
+}
+
+function encodeMessageRead(result) {
+	return typeof result === 'string' ? result : JSON.stringify(result);
 }
 
 function readRFCMessageID(message) {
@@ -63,11 +67,11 @@ function listMessages(mail, args) {
 	const offset = Number(offsetValue) || 0;
 	const result = [];
 
+	const scope = resolveMessageScope(mail, accountName, mailboxName);
+	if (scope.error) return scope.error;
+	const mailbox = scope.mailbox;
+
 	try {
-		const account = mail.accounts.byName(accountName);
-		const mailbox = account.mailboxes.byName(mailboxName);
-		const resolvedAccount = account.name();
-		const resolvedMailbox = mailbox.name();
 		const messages = mailbox.messages();
 		// Filtering operates on indices so properties can be fetched in bulk.
 		let indices = Array.from({length: messages.length}, (_, i) => i);
@@ -98,7 +102,7 @@ function listMessages(mail, args) {
 				continue;
 			}
 			try {
-				result.push(messageMetadata(message, resolvedAccount, resolvedMailbox));
+				result.push(messageMetadata(message, accountName, mailboxName));
 			} catch (e) {
 				// Skip inaccessible rows.
 			}
@@ -116,11 +120,11 @@ function searchMessages(mail, args) {
 	const searchTerm = query.toLowerCase();
 	const limit = Number(limitValue) || 0;
 
+	const scope = resolveMessageScope(mail, accountName, mailboxName);
+	if (scope.error) return scope.error;
+	const mailbox = scope.mailbox;
+
 	try {
-		const account = mail.accounts.byName(accountName);
-		const mailbox = account.mailboxes.byName(mailboxName);
-		const resolvedAccount = account.name();
-		const resolvedMailbox = mailbox.name();
 		const messages = mailbox.messages();
 		const maxToCheck = Math.min(messages.length, 500);
 
@@ -130,7 +134,7 @@ function searchMessages(mail, args) {
 				const subject = (message.subject() || '').toLowerCase();
 				const sender = (message.sender() || '').toLowerCase();
 				if (subject.includes(searchTerm) || sender.includes(searchTerm)) {
-					result.push(messageMetadata(message, resolvedAccount, resolvedMailbox));
+					result.push(messageMetadata(message, accountName, mailboxName));
 				}
 			} catch (e) {
 				// Skip inaccessible rows.
@@ -214,10 +218,9 @@ function normalizeRFCMessageID(id) {
 
 function showMessages(mail, args) {
 	const [accountName, mailboxName, selector, ...ids] = args;
-	const account = mail.accounts.byName(accountName);
-	const mailbox = account.mailboxes.byName(mailboxName);
-	const resolvedAccount = account.name();
-	const resolvedMailbox = mailbox.name();
+	const scope = resolveMessageScope(mail, accountName, mailboxName);
+	if (scope.error) return scope.error;
+	const mailbox = scope.mailbox;
 	const byRFCID = selector === 'rfc';
 	const keys = byRFCID ? ids.map(normalizeRFCMessageID) : ids;
 	const matches = new Map(keys.map(key => [key, []]));
@@ -269,7 +272,7 @@ function showMessages(mail, args) {
 		return {issues: issues};
 	}
 	const details = messages.map((message, index) => {
-		const detail = messageDetail(message, resolvedAccount, resolvedMailbox);
+		const detail = messageDetail(message, accountName, mailboxName);
 		const expectedID = selected[index].localID;
 		// Mail.app can refresh an index-based reference during a series of reads.
 		if (detail.id !== expectedID || String(message.id()) !== expectedID) {

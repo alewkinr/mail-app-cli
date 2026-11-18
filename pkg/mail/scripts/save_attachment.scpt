@@ -4,9 +4,11 @@ function run(argv) {
 	const app = Application.currentApplication();
 	app.includeStandardAdditions = true;
 
+	const scope = resolveMessageScope(mail, accountName, mailboxName);
+	if (scope.error) return scope.error;
+	const mbox = scope.mailbox;
+
 	try {
-		const acc = mail.accounts.byName(accountName);
-		const mbox = acc.mailboxes.byName(mailboxName);
 		const allIds = mbox.messages.id();
 		const targetIdx = allIds.findIndex(id => String(id) === messageID);
 		if (targetIdx < 0) {

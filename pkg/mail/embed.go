@@ -3,6 +3,9 @@ package mail
 import _ "embed"
 
 var (
+	//go:embed scripts/message_scope.scpt
+	messageScopeJXAScript string
+
 	//go:embed scripts/read_messages.scpt
 	readMessagesJXAScript string
 

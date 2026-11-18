@@ -44,14 +44,17 @@ function findMessageByMessageId(mailbox, messageId) {
 }
 
 function archiveMessage(accountName, sourceMailboxName, localMessageId) {
+	const scope = resolveAccount(mail, accountName);
+	if (scope.error) return scope.error;
+	const account = scope.account;
+
 	try {
-		const account = mail.accounts.byName(accountName);
 		const sourceMailbox = findMailbox(
 			account.mailboxes(),
 			sourceMailboxName
 		);
 		if (!sourceMailbox) {
-			return 'Error: Source mailbox not found';
+			return scopeFailure('mailbox_not_found', accountName, sourceMailboxName);
 		}
 
 		const targetMessage = findMessage(sourceMailbox, localMessageId);
@@ -66,7 +69,7 @@ function archiveMessage(accountName, sourceMailboxName, localMessageId) {
 
 		const archiveMailbox = findMailbox(account.mailboxes(), 'Archive');
 		if (!archiveMailbox) {
-			return 'Error: Archive mailbox not found';
+			return scopeFailure('mailbox_not_found', accountName, 'Archive');
 		}
 
 		targetMessage.mailbox = archiveMailbox;

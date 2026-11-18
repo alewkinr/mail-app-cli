@@ -48,6 +48,7 @@ on run argv
 	end if
 
 	tell application "Mail"
+		if not (exists account accountName) then return "Account not found"
 		try
 			set targetAccount to account accountName
 			set newMessage to make new outgoing message with properties {subject:messageSubject, content:messageBody, visible:false}

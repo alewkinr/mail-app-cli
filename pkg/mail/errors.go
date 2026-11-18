@@ -32,3 +32,7 @@ func resolverError(code string) error {
 
 	return fmt.Errorf("Mail.app identity resolution failed: %w", err)
 }
+
+func accountNotFound(account string) error {
+	return fmt.Errorf("%w: %q (use `mail-app-cli accounts list` to see account names)", ErrAccountNotFound, account)
+}

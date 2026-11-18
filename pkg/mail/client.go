@@ -45,7 +45,30 @@ func (c *Client) runAppleScript(script string, args ...string) (string, error) {
 // runJXA executes JavaScript for Automation (JXA), optionally passing
 // arguments to its run(argv) function, and returns the output.
 func (c *Client) runJXA(script string, args ...string) (string, error) {
-	return c.runOSA("JavaScript", "jxa", script, args...)
+	output, err := c.runOSA("JavaScript", "jxa", messageScopeJXAScript+"\n"+script, args...)
+	if err != nil {
+		return "", err
+	}
+	const prefix = "MailCLI scope error: "
+	if payload, ok := strings.CutPrefix(output, prefix); ok {
+		var scope struct {
+			Code, Account, Mailbox string
+		}
+		if err := json.Unmarshal([]byte(payload), &scope); err != nil {
+			return "", fmt.Errorf("decode Mail.app scope error: %w", err)
+		}
+		switch scope.Code {
+		case "account_not_found":
+			return "", accountNotFound(scope.Account)
+		case "account_ambiguous":
+			return "", fmt.Errorf("%w: %q", ErrAccountAmbiguous, scope.Account)
+		case "mailbox_not_found":
+			return "", fmt.Errorf("%w: %q in account %q", ErrMailboxNotFound, scope.Mailbox, scope.Account)
+		default:
+			return "", fmt.Errorf("unknown Mail.app scope error: %q", scope.Code)
+		}
+	}
+	return output, nil
 }
 
 // Account represents a Mail.app account
@@ -196,8 +219,17 @@ func (c *Client) SendMessage(accountName, subject, body string, to, cc, bcc, att
 	args = append(args, strconv.Itoa(len(attachments)))
 	args = append(args, attachments...)
 
-	_, err := c.runAppleScript(sendMessageAppleScript, args...)
-	return err
+	output, err := c.runAppleScript(sendMessageAppleScript, args...)
+	if err != nil {
+		return err
+	}
+	if output == "Account not found" {
+		return accountNotFound(accountName)
+	}
+	if output != "Success" {
+		return fmt.Errorf("send message: %s", output)
+	}
+	return nil
 }
 
 // Helper function to parse accounts from AppleScript output
@@ -504,6 +536,9 @@ func (c *Client) SearchMessagesJSON(query string, accountName string, mailboxNam
 
 	// If specific mailbox requested, use single JXA call for simplicity
 	if mailboxName != "" {
+		if accountName == "" {
+			return nil, fmt.Errorf("an account is required when searching a specific mailbox")
+		}
 		return c.searchMessagesInSingleMailbox(query, accountName, mailboxName, limit)
 	}
 

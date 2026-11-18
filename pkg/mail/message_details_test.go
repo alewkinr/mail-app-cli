@@ -1,6 +1,7 @@
 package mail
 
 import (
+	"errors"
 	"runtime"
 	"strings"
 	"testing"
@@ -48,8 +49,8 @@ function mockApplication() {
 	messages.id = () => fixtures.map(message => message.id());
 	messages.at = index => fixtures[index];
 	const mailbox = {name: () => 'INBOX', messages: messages};
-	const account = {name: () => 'Personal', mailboxes: {byName: () => mailbox}};
-	return {accounts: {byName: () => account}};
+	const account = {name: () => 'Personal', mailboxes: () => [mailbox]};
+	return {accounts: () => [account]};
 }
 `
 	// Provide a mock bridge inside a private scope because JXA owns the global Application.
@@ -102,6 +103,21 @@ function mockApplication() {
 				if messages[i].ID != want || messages[i].Content != "body "+want {
 					t.Errorf("message %d ID = %q, content = %q, want ID %q", i, messages[i].ID, messages[i].Content, want)
 				}
+			}
+		})
+	}
+
+	for _, test := range []struct {
+		name, account, mailbox string
+		want                   error
+	}{
+		{"missing account", "Unknown", "INBOX", ErrAccountNotFound},
+		{"missing mailbox", "Personal", "Unknown", ErrMailboxNotFound},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			output, err := NewClient().runJXA(script, "show", test.account, test.mailbox, "rfc", "one@example.com")
+			if !errors.Is(err, test.want) || output != "" {
+				t.Fatalf("got output %q and error %v, want %v", output, err, test.want)
 			}
 		})
 	}

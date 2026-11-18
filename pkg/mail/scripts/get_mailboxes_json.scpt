@@ -3,8 +3,11 @@ function run(argv) {
 	const mail = Application('Mail');
 	const result = [];
 
+	const scope = resolveAccount(mail, accountName);
+	if (scope.error) return scope.error;
+	const acc = scope.account;
+
 	try {
-		const acc = mail.accounts.byName(accountName);
 		const accName = acc.name();
 		const mailboxes = acc.mailboxes();
 		for (let j = 0; j < mailboxes.length; j++) {

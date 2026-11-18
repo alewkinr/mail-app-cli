@@ -38,8 +38,12 @@ function fixtureMail() {
 	messages.id = () => [42, 43];
 	messages.at = index => messages()[index];
 	const mailbox = {name: () => 'INBOX', messages: messages, account: () => account};
-	const account = {name: () => 'Test', mailboxes: {byName: () => mailbox}};
-	return {accounts: {byName: () => account}, sentMailboxes: () => [mailbox]};
+	const mailboxes = () => [mailbox];
+	mailboxes.byName = () => mailbox;
+	const account = {name: () => 'Test', mailboxes: mailboxes};
+	const accounts = () => [account];
+	accounts.byName = () => account;
+	return {accounts: accounts, sentMailboxes: () => [mailbox]};
 }
 `
 
