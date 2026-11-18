@@ -30,6 +30,9 @@ var (
 	//go:embed scripts/send_message.scpt
 	sendMessageAppleScript string
 
+	//go:embed scripts/create_draft.scpt
+	createDraftAppleScript string
+
 	//go:embed scripts/get_unread_count.scpt
 	getUnreadCountAppleScript string
 

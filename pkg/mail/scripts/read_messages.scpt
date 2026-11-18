@@ -10,6 +10,10 @@ function run(argv) {
 		return JSON.stringify(specialMailboxMessages(mail, args));
 	case 'draft-list':
 		return encodeMessageRead(listDrafts(mail, args[0]));
+	case 'draft-snapshot':
+		return encodeMessageRead(snapshotDrafts(mail, args[0]));
+	case 'draft-observe':
+		return encodeMessageRead(observeDrafts(mail, args));
 	case 'draft-show':
 		return encodeMessageRead(showDraft(mail, args[0], args[1]));
 	case 'show':
@@ -323,4 +327,51 @@ function showDraft(mail, accountName, localID) {
 	const scope = resolveSpecialMailbox(mail.draftsMailbox().mailboxes(), accountScope.account, 'Drafts');
 	if (scope.error) return scope.error;
 	return readMessageDetails(scope.mailbox, accountName, scope.mailbox.name(), 'local', [localID], true);
+}
+
+function snapshotDrafts(mail, accountName) {
+	const accountScope = resolveAccount(mail, accountName);
+	if (accountScope.error) return accountScope.error;
+	const account = accountScope.account;
+	const scope = resolveSpecialMailbox(mail.draftsMailbox().mailboxes(), account, 'Drafts');
+	if (scope.error) return scope.error;
+	const sender = account.emailAddresses()[0] || '';
+	const senderKey = sender.toLowerCase();
+	const owners = mail.accounts().filter(candidate =>
+		candidate.emailAddresses().some(address => address.toLowerCase() === senderKey)
+	);
+	if (sender && owners.length !== 1) throw new Error('draft sender belongs to multiple accounts');
+	return {accountID: String(account.id()), mailbox: scope.mailbox.name(), sender, ids: scope.mailbox.messages.id().map(String)};
+}
+
+function observeDrafts(mail, args) {
+	const [accountName, accountID, mailboxName, baseline] = args;
+	const accountScope = resolveAccount(mail, accountName);
+	if (accountScope.error) return accountScope.error;
+	if (String(accountScope.account.id()) !== accountID) throw new Error('draft account changed');
+	const scope = resolveSpecialMailbox(mail.draftsMailbox().mailboxes(), accountScope.account, 'Drafts');
+	if (scope.error) return scope.error;
+	if (scope.mailbox.name() !== mailboxName) throw new Error('draft mailbox changed');
+
+	const previous = new Set(JSON.parse(baseline));
+	const drafts = [];
+	let pending = false;
+	for (const id of scope.mailbox.messages.id()) {
+		if (previous.has(String(id))) continue;
+		try {
+			const message = scope.mailbox.messages.byId(id);
+			if (message.deletedStatus()) continue;
+			const detail = messageDetail(message, accountName, mailboxName);
+			detail.attachments = message.mailAttachments().map(attachment => attachment.name());
+			if (detail.id !== String(id) || String(message.mailbox().account().id()) !== accountID) {
+				pending = true;
+				continue;
+			}
+			drafts.push(detail);
+		} catch (e) {
+			// The ID can be visible before its record properties are readable.
+			pending = true;
+		}
+	}
+	return {drafts, pending};
 }

@@ -10,8 +10,9 @@ import (
 )
 
 type stubDraftReader struct {
-	list func(account string) ([]mail.Message, error)
-	show func(account, localID string) (*mail.MessageDetail, error)
+	list   func(account string) ([]mail.Message, error)
+	show   func(account, localID string) (*mail.MessageDetail, error)
+	create func(account string, options mail.DraftOptions) (*mail.Message, error)
 }
 
 func (s stubDraftReader) ListDrafts(account string) ([]mail.Message, error) {
@@ -20,6 +21,10 @@ func (s stubDraftReader) ListDrafts(account string) ([]mail.Message, error) {
 
 func (s stubDraftReader) ShowDraft(account, localID string) (*mail.MessageDetail, error) {
 	return s.show(account, localID)
+}
+
+func (s stubDraftReader) CreateDraft(account string, options mail.DraftOptions) (*mail.Message, error) {
+	return s.create(account, options)
 }
 
 func TestDraftList(t *testing.T) {
@@ -102,5 +107,23 @@ func TestMessagesDraftsCommandRemoved(t *testing.T) {
 		if command.Name() == "drafts" || command.HasAlias("drafts") {
 			t.Fatal("legacy messages drafts command is still registered")
 		}
+	}
+}
+
+func TestDraftCreate(t *testing.T) {
+	command := newDraftCmd(stubDraftReader{create: func(account string, options mail.DraftOptions) (*mail.Message, error) {
+		if account != "Work" || options.Body != "body only" || options.Subject != "" || len(options.To) != 0 {
+			t.Errorf("unexpected account %q or options %+v", account, options)
+		}
+		return &mail.Message{ID: "42", Mailbox: "Drafts"}, nil
+	}})
+	var output bytes.Buffer
+	command.SetOut(&output)
+	command.SetArgs([]string{"create", "--account", "Work", "--body", "body only"})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), `"id": "42"`) {
+		t.Errorf("got %q, want saved metadata", output.String())
 	}
 }

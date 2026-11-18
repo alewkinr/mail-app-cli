@@ -22,6 +22,7 @@ func TestEmbeddedScripts(t *testing.T) {
 		{name: "flag_message", language: "JavaScript", source: flagMessageJXAScript},
 		{name: "delete_message", language: "JavaScript", source: deleteMessageJXAScript},
 		{name: "send_message", language: "AppleScript", source: sendMessageAppleScript},
+		{name: "create_draft", language: "AppleScript", source: createDraftAppleScript},
 		{name: "get_unread_count", language: "AppleScript", source: getUnreadCountAppleScript},
 		{name: "get_accounts_json", language: "JavaScript", source: getAccountsJXAScript},
 		{name: "sync_account", language: "AppleScript", source: syncAccountAppleScript},

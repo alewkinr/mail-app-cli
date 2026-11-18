@@ -159,16 +159,20 @@ synthetic drafts were moved to Trash and verified.
   `pkg/mail/scripts/create_draft.scpt`.
 - Modify `pkg/mail/scripts_test.go`.
 
-- [ ] Add compose flags and validate the account, sender, and attachments.
+- [x] Add compose flags and validate the account, sender, and attachments.
       Reuse the existing compose conventions and surface attachment errors.
-- [ ] Serialize creates per account. Snapshot Drafts before composition,
+- [x] Serialize creates per account. Snapshot Drafts before composition,
       save and close, then poll and match the post-close delta. Return
       persisted metadata on a unique match. Report ambiguity or timeout as
       uncertain and invalidate affected message caches.
-- [ ] Test body-only and complete drafts, attachment failures, uncertain
+- [x] Test body-only and complete drafts, attachment failures, uncertain
       saves, duplicate content, account-level serialization, and nullable
       RFC Message-ID.
-- [ ] Run tests and lint.
+- [x] Run tests and lint.
+
+Live iCloud checks verified a body-only draft and an attachment draft. The
+saved attachment matched the original bytes. All four synthetic records
+created while testing were moved to Trash.
 
 ### Task 4: Move a saved draft to Trash
 
