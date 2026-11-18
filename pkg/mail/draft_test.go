@@ -3,7 +3,9 @@ package mail
 import (
 	"errors"
 	"os"
+	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -125,4 +127,96 @@ func TestDraftAccountLock(t *testing.T) {
 	t.Cleanup(func() {
 		_ = other.Close()
 	})
+}
+
+func TestDeleteDraftBridge(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("osascript is only available on macOS")
+	}
+	const fixture = `
+function fixtureMail() {
+	const work = {id: () => '1', name: () => 'Work'};
+	const personal = {id: () => '2', name: () => 'Personal'};
+	const parent = owner => ({account: () => owner});
+	let sourceReads = 0;
+	let moved = false;
+	const source = {name: () => 'Account Drafts', account: () => work};
+	const destination = {name: () => 'Deleted Items', account: () => work};
+	const personalDrafts = {name: () => 'Drafts', account: () => personal, messages: {id: () => []}};
+	const draft = {id: () => 42, deletedStatus: () => false, messageId: () => '<unique@draft.invalid>'};
+	Object.defineProperty(draft, 'mailbox', {
+		get() { return () => fixtureCase === 'non-draft reference' ? {name: () => 'Inbox', ...parent(work)} : source; },
+		set(value) {
+			if (!['verified', 'nullable RFC ID', 'uncertain', 'ambiguous arrival'].includes(fixtureCase) ||
+			    value !== destination || moved) throw Error('unexpected mutation');
+			moved = true;
+		}
+	});
+	source.messages = {
+		id: () => {
+			if (fixtureCase === 'ambiguous source') return [42, 42];
+			return moved && sourceReads++ > 0 ? [] : [42];
+		},
+		byId: () => draft
+	};
+	const trashIDs = () => {
+		if (!moved || fixtureCase === 'uncertain') return [1];
+		if (fixtureCase === 'nullable RFC ID') return [1, 42];
+		if (fixtureCase === 'ambiguous arrival') return [1, 43, 44];
+		return [1, 43];
+	};
+	destination.messages = {
+		id: trashIDs,
+		byId: () => ({messageId: draft.messageId})
+	};
+	if (fixtureCase === 'nullable RFC ID') draft.messageId = () => '';
+	return {
+		accounts: () => [work, personal],
+		draftsMailbox: () => ({mailboxes: () => [source, personalDrafts]}),
+		trashMailbox: () => ({mailboxes: () => fixtureCase === 'missing Trash' ? [] :
+			fixtureCase === 'ambiguous Trash' ? [destination, {...destination}] : [destination]})
+	};
+}
+`
+	tests := []struct {
+		name, account, id string
+		want              error
+		wantText          string
+	}{
+		{name: "verified", account: "Work", id: "42"},
+		{name: "nullable RFC ID", account: "Work", id: "42"},
+		{name: "wrong account", account: "Personal", id: "42", want: ErrMailboxNotFound},
+		{name: "non-draft ID", account: "Work", id: "99", want: ErrMessageNotFound},
+		{name: "non-draft reference", account: "Work", id: "42", want: ErrMessageNotFound},
+		{name: "missing Trash", account: "Work", id: "42", want: ErrMailboxNotFound},
+		{name: "ambiguous Trash", account: "Work", id: "42", want: ErrMailboxAmbiguous},
+		{name: "ambiguous source", account: "Work", id: "42", wantText: "is ambiguous"},
+		{name: "ambiguous arrival", account: "Work", id: "42", wantText: "is uncertain"},
+		{name: "uncertain", account: "Work", id: "42", wantText: "is uncertain"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			move, err := deleteDraft(func(script string, args ...string) (string, error) {
+				script = strings.Replace(script, "Application('Mail')", "fixtureMail()", 1)
+				script = strings.Replace(script, "delay(0.35)", "void 0", 1)
+				script += fixture + "\nconst fixtureCase = " + strconv.Quote(test.name) + ";"
+				return NewClient().runJXA(script, args...)
+			}, test.account, test.id)
+			switch {
+			case test.want != nil:
+				if !errors.Is(err, test.want) {
+					t.Fatalf("got error %v, want %v", err, test.want)
+				}
+			case test.wantText != "":
+				if err == nil || !strings.Contains(err.Error(), test.wantText) {
+					t.Fatalf("got error %v, want %q", err, test.wantText)
+				}
+			default:
+				want := DraftMove{Account: "Work", DraftID: "42", DraftMailbox: "Account Drafts", TrashMailbox: "Deleted Items"}
+				if err != nil || move != want {
+					t.Fatalf("got move %+v and error %v, want %+v", move, err, want)
+				}
+			}
+		})
+	}
 }

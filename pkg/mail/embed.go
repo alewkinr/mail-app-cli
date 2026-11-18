@@ -33,6 +33,9 @@ var (
 	//go:embed scripts/create_draft.scpt
 	createDraftAppleScript string
 
+	//go:embed scripts/delete_draft.scpt
+	deleteDraftJXAScript string
+
 	//go:embed scripts/get_unread_count.scpt
 	getUnreadCountAppleScript string
 

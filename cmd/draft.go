@@ -13,6 +13,7 @@ type draftClient interface {
 	ListDrafts(account string) ([]mail.Message, error)
 	ShowDraft(account, localID string) (*mail.MessageDetail, error)
 	CreateDraft(account string, options mail.DraftOptions) (*mail.Message, error)
+	DeleteDraft(account, localID string) (mail.DraftMove, error)
 }
 
 func newDraftCmd(client draftClient) *cobra.Command {
@@ -59,6 +60,7 @@ func newDraftCmd(client draftClient) *cobra.Command {
 		},
 	})
 	drafts.AddCommand(newDraftCreateCmd(client, &account))
+	drafts.AddCommand(newDraftDeleteCmd(client, &account))
 	return drafts
 }
 
@@ -90,4 +92,32 @@ func newDraftCreateCmd(client draftClient, account *string) *cobra.Command {
 	flags.StringArrayVarP(&options.Bcc, "bcc", "b", nil, "Bcc recipient (repeatable)")
 	flags.StringArrayVar(&options.Attachments, "attach", nil, "File to attach (repeatable)")
 	return command
+}
+
+func newDraftDeleteCmd(client draftClient, account *string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "delete <local-id>",
+		Short: "Move a saved draft to Trash",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if strings.TrimSpace(*account) == "" {
+				return fmt.Errorf("--account is required")
+			}
+			if strings.TrimSpace(args[0]) == "" {
+				return fmt.Errorf("draft ID must be nonempty")
+			}
+			move, err := client.DeleteDraft(*account, args[0])
+			for _, mailbox := range []string{move.DraftMailbox, move.TrashMailbox} {
+				if mailbox != "" {
+					invalidateMailboxCache(*account, mailbox)
+				}
+			}
+			if err != nil {
+				return err
+			}
+			encoder := json.NewEncoder(cmd.OutOrStdout())
+			encoder.SetIndent("", "  ")
+			return encoder.Encode(move)
+		},
+	}
 }

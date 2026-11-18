@@ -183,12 +183,19 @@ created while testing were moved to Trash.
   `pkg/mail/scripts_test.go`.
 - Create `pkg/mail/scripts/delete_draft.scpt`.
 
-- [ ] Resolve Drafts and Trash in the selected account, match the local ID in
+- [x] Resolve Drafts and Trash in the selected account, match the local ID in
       Drafts, and move only that record. Verify the move and invalidate the
       affected caches.
-- [ ] Test successful moves, wrong-account and non-draft IDs, unresolved
+- [x] Test successful moves, wrong-account and non-draft IDs, unresolved
       Trash, and uncertain outcomes.
-- [ ] Run tests and lint.
+- [x] Run tests and lint.
+
+
+Deletion issues one reversible mailbox move and verifies that the draft ID
+disappeared from Drafts and a matching new record appeared in Trash. Match
+the original local ID when retained or its RFC ID when the local ID changes.
+If neither verifies the move, return uncertainty without retrying. Success
+prints JSON with the original draft ID, account, and both mailbox names.
 
 ### Task 5: Verify acceptance criteria
 

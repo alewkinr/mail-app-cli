@@ -3,6 +3,7 @@ package mail
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	netmail "net/mail"
 	"os"
@@ -245,4 +246,66 @@ func addressKey(value string) string {
 		return strings.ToLower(address.Address)
 	}
 	return strings.ToLower(strings.TrimSpace(value))
+}
+
+// DraftMove identifies the saved draft and its source and destination mailboxes.
+type DraftMove struct {
+	Account      string `json:"account"`
+	DraftID      string `json:"draftId"`
+	DraftMailbox string `json:"draftMailbox"`
+	TrashMailbox string `json:"trashMailbox"`
+}
+
+// DeleteDraft moves a saved draft to Trash within the selected account.
+func (c *Client) DeleteDraft(account, localID string) (DraftMove, error) {
+	return deleteDraft(c.runJXA, account, localID)
+}
+
+func deleteDraft(run jxaRunFunc, account, localID string) (DraftMove, error) {
+	if strings.TrimSpace(account) == "" {
+		return DraftMove{}, fmt.Errorf("account is required")
+	}
+	if strings.TrimSpace(localID) == "" {
+		return DraftMove{}, fmt.Errorf("draft ID must be nonempty")
+	}
+
+	uncertain := func(stage string) error {
+		return fmt.Errorf("trash move for draft %q in account %q is uncertain (%s); check draft list and Trash before retrying", localID, account, stage)
+	}
+	output, err := run(deleteDraftJXAScript, account, localID)
+	if err != nil {
+		for _, scopeError := range []error{ErrAccountNotFound, ErrAccountAmbiguous, ErrMailboxNotFound, ErrMailboxAmbiguous} {
+			if errors.Is(err, scopeError) {
+				return DraftMove{}, err
+			}
+		}
+		return DraftMove{}, fmt.Errorf("%w: %w", uncertain("Mail.app script failed"), err)
+	}
+	var result struct {
+		Status      string
+		Source      string
+		Destination string
+	}
+	if err := json.Unmarshal([]byte(output), &result); err != nil {
+		return DraftMove{}, uncertain("invalid Mail.app response")
+	}
+	move := DraftMove{
+		Account: account, DraftID: localID,
+		DraftMailbox: result.Source, TrashMailbox: result.Destination,
+	}
+	switch result.Status {
+	case "not_found":
+		return DraftMove{}, fmt.Errorf("draft %q in account %q: %w", localID, account, ErrMessageNotFound)
+	case "ambiguous":
+		return DraftMove{}, fmt.Errorf("draft %q in account %q is ambiguous", localID, account)
+	case "moved":
+		if move.DraftMailbox != "" && move.TrashMailbox != "" {
+			return move, nil
+		}
+		return move, uncertain("incomplete Mail.app response")
+	case "uncertain":
+		return move, uncertain("could not verify the move")
+	default:
+		return move, uncertain("unexpected Mail.app response")
+	}
 }

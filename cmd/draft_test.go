@@ -13,6 +13,7 @@ type stubDraftReader struct {
 	list   func(account string) ([]mail.Message, error)
 	show   func(account, localID string) (*mail.MessageDetail, error)
 	create func(account string, options mail.DraftOptions) (*mail.Message, error)
+	delete func(account, localID string) (mail.DraftMove, error)
 }
 
 func (s stubDraftReader) ListDrafts(account string) ([]mail.Message, error) {
@@ -125,5 +126,58 @@ func TestDraftCreate(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), `"id": "42"`) {
 		t.Errorf("got %q, want saved metadata", output.String())
+	}
+}
+
+func (s stubDraftReader) DeleteDraft(account, localID string) (mail.DraftMove, error) {
+	return s.delete(account, localID)
+}
+
+func TestDraftDelete(t *testing.T) {
+	command := newDraftCmd(stubDraftReader{delete: func(account, localID string) (mail.DraftMove, error) {
+		if account != "Work" || localID != "42" {
+			t.Errorf("got account %q and ID %q", account, localID)
+		}
+		return mail.DraftMove{Account: account, DraftID: localID}, nil
+	}})
+	var output bytes.Buffer
+	command.SetOut(&output)
+	command.SetArgs([]string{"delete", "42", "--account", "Work"})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), `"draftId": "42"`) {
+		t.Errorf("got %q, want deleted draft ID", output.String())
+	}
+}
+
+func TestDraftDeleteFailuresLeaveStdoutEmpty(t *testing.T) {
+	tests := []struct {
+		name, account, id string
+		want              string
+	}{
+		{name: "missing account", id: "42", want: "--account is required"},
+		{name: "blank ID", account: "Work", id: " ", want: "draft ID must be nonempty"},
+		{name: "uncertain result", account: "Work", id: "42", want: "trash move is uncertain"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			command := newDraftCmd(stubDraftReader{delete: func(account, localID string) (mail.DraftMove, error) {
+				if test.name != "uncertain result" {
+					t.Fatal("invalid arguments reached draft deletion")
+				}
+				return mail.DraftMove{}, errors.New("trash move is uncertain")
+			}})
+			var output bytes.Buffer
+			command.SetOut(&output)
+			command.SetArgs([]string{"delete", test.id, "--account", test.account})
+			err := command.Execute()
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Errorf("got error %v, want %q", err, test.want)
+			}
+			if output.Len() != 0 {
+				t.Errorf("got stdout %q, want empty", output.String())
+			}
+		})
 	}
 }
